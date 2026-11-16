@@ -22,6 +22,9 @@ struct Tab {
     std::wstring banner;                     // per-tab error / crash notice
     bool pinned { false };
     bool loading { false };
+    bool startPage { false };                // new empty tab: the native start page shows instead of the view
+    bool typedPending { false };             // next committed navigation came from the Smart Search field
+    bool skipNextVisit { false };            // next commit is a session restore, not a new visit
     double progress { 0 };
 
     services::Bitmap favicon;

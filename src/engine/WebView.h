@@ -24,6 +24,8 @@ struct WebViewCallbacks {
     std::function<void(const std::wstring& url, const std::wstring& description)> loadFailed;
     std::function<void()> webProcessCrashed;
     std::function<void(const std::wstring& iconURL)> faviconURLChanged;
+    // Main-frame navigation committed (the page now shows `url`): one history visit.
+    std::function<void(const std::wstring& url)> navigationCommitted;
     // target=_blank / window.open: the UI creates a tab for this configuration
     // and returns its view (or nullptr to block the popup).
     std::function<WebView*(WKPageConfigurationRef)> createNewPage;

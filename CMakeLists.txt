@@ -35,9 +35,16 @@ target_link_libraries(meridian_platform PUBLIC dwmapi crypt32 d3d11 dxgi windows
 
 # --- services: no WebKit dependency (unit-testable) -------------------------
 add_library(meridian_services STATIC
+    src/services/Bookmarks.cpp
     src/services/Database.cpp
     src/services/Favicons.cpp
+    src/services/History.cpp
+    src/services/IconStore.cpp
+    src/services/SearchSuggestions.cpp
     src/services/SessionStore.cpp
+    src/services/Settings.cpp
+    src/services/Suggestions.cpp
+    src/services/Text.cpp
     src/services/UrlFixup.cpp
 )
 target_include_directories(meridian_services PUBLIC src PRIVATE "${SQLITE_INCLUDE_DIR}")
@@ -66,6 +73,9 @@ if(MERIDIAN_BUILD_APP)
         src/engine/WebView.cpp
         src/ui/BrowserWindow.cpp
         src/ui/Chrome.cpp
+        src/ui/HistoryView.cpp
+        src/ui/StartPage.cpp
+        src/ui/SuggestionPopup.cpp
         src/ui/TabStrip.cpp
         src/ui/TabOverview.cpp
     )
@@ -89,7 +99,8 @@ endif()
 if(MERIDIAN_BUILD_TESTS)
     enable_testing()
     add_executable(meridian_tests tests/test_main.cpp tests/UrlFixupTests.cpp
-        tests/SessionStoreTests.cpp tests/FaviconTests.cpp)
+        tests/SessionStoreTests.cpp tests/FaviconTests.cpp
+        tests/HistoryTests.cpp tests/BookmarkTests.cpp tests/SuggestionTests.cpp)
     target_link_libraries(meridian_tests PRIVATE meridian_services)
     meridian_copy_sqlite(meridian_tests)
     add_test(NAME services COMMAND meridian_tests)

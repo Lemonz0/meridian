@@ -3,11 +3,16 @@
 // over a DWM Mica backdrop. The GPU glass pipeline replaces this in a later
 // milestone; see docs/GLASS_NOTES.md.
 #include "Chrome.h"
+#include "HistoryView.h"
+#include "StartPage.h"
+#include "SuggestionPopup.h"
 #include "Tab.h"
 #include "TabOverview.h"
 #include "TabStrip.h"
 #include "services/SessionStore.h"
+#include "services/Suggestions.h"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,6 +64,45 @@ private:
     void tabsChanged();
 
     void automate(const std::wstring& command); // see App::enableAutomation
+    void dumpUi(const std::wstring& path);      // automation: field, suggestions, start page, history
+
+    // The engine context this window's tabs use. Private windows (M6) will
+    // have their own; history, icons and search suggestions are off for those.
+    engine::EngineContext& context();
+
+    // Content area: the active tab's page, or one of the native views.
+    bool showingStartPage() const;
+    void updateContentView();
+    void focusContent();
+    void refreshStartPage();
+    void showStartPageMenu(POINT screen, StartPage::Hit);
+
+    // History view (Ctrl+H)
+    void setHistory(bool open);
+    void refreshHistory();
+    void openHistoryEntry(int index, bool newTab);
+    void deleteHistoryEntry(int index);
+    void clearHistory();
+    void showHistoryMenu(int index, POINT screen);
+
+    // Bookmarks
+    void addBookmark();                                // Ctrl+D: current page to Favorites
+    void importBookmarks(std::wstring path = {});      // empty: ask with a file dialog
+    void exportBookmarks(std::wstring path = {});
+    ID2D1Bitmap* siteIconBitmap(const std::wstring& host);
+
+    // Smart Search
+    void navigate(const std::wstring& url, bool typed);
+    std::wstring addressText() const;
+    void setAddressText(const std::wstring&);         // caret at the end; not treated as typing
+    void onAddressEdited();                            // EN_CHANGE from the user
+    void refreshSuggestions(bool allowCompletion);
+    void showSuggestions(int selected);
+    void hideSuggestions();
+    void moveSuggestionSelection(int delta);
+    void activateSuggestion(int index);
+    void removeSelectedSuggestionFromHistory();
+    bool handleAddressKey(WPARAM vk, bool shift);     // true if consumed
 
     // Overview
     void setOverview(bool open);
@@ -104,6 +148,23 @@ private:
         bool tearOff { false };
     } m_drag;
 
+    SuggestionPopup m_popup;
+    services::SuggestionList m_suggestions;
+    std::wstring m_typed;              // what the user typed, without the inline completion
+    bool m_settingAddress { false };   // our own SetWindowText: not typing
+    bool m_deleteKey { false };        // the next edit came from Backspace/Delete: don't complete
+
+    StartPage m_startPage;
+    StartPage::Hit m_startHover;
+
+    HistoryView m_historyView;
+    bool m_historyOpen { false };
+    HWND m_historySearch { nullptr };
+    int m_historyHover { -1 };
+    int m_historySelected { -1 };
+
+    std::map<std::wstring, ComPtr<ID2D1Bitmap>> m_siteIcons; // per render target
+
     TabOverview m_overview;
     bool m_overviewOpen { false };
     int m_overviewHover { -1 };
@@ -118,6 +179,7 @@ private:
     ComPtr<IDWriteFactory3> m_dwrite;
     ComPtr<ID2D1HwndRenderTarget> m_rt;
     ComPtr<IDWriteTextFormat> m_hostFormat, m_tabFormat, m_cardTitleFormat, m_cardBigFormat;
+    ComPtr<IDWriteTextFormat> m_headingFormat, m_letterFormat, m_listFormat;
     HFONT m_editFont { nullptr };
     HBRUSH m_editBrush { nullptr };
 };

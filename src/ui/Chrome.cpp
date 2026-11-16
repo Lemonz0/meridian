@@ -1,5 +1,6 @@
 #include "Chrome.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace meridian::ui {
@@ -173,6 +174,44 @@ ComPtr<ID2D1Bitmap> makeBitmap(ID2D1RenderTarget* rt, const services::Bitmap& bm
     auto props = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     rt->CreateBitmap(D2D1::SizeU(bmp.width, bmp.height), bmp.bgra.data(), bmp.width * 4, props, out.GetAddressOf());
     return out;
+}
+
+void Painter::magnifier(D2D1_POINT_2F c, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(c.x - 1.5f, c.y - 1.5f), 4.6f, 4.6f), brush, tokens::kGlyphStroke, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x + 1.9f, c.y + 1.9f), D2D1::Point2F(c.x + 5.5f, c.y + 5.5f), brush,
+        tokens::kGlyphStroke + 0.3f, style.Get());
+}
+
+void Painter::clock(D2D1_POINT_2F c, float r, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    rt->DrawEllipse(D2D1::Ellipse(c, r, r), brush, 1.3f, style.Get());
+    rt->DrawLine(c, D2D1::Point2F(c.x, c.y - r * 0.6f), brush, 1.3f, style.Get());
+    rt->DrawLine(c, D2D1::Point2F(c.x + r * 0.45f, c.y + r * 0.2f), brush, 1.3f, style.Get());
+}
+
+void Painter::siteTile(D2D1_RECT_F box, ID2D1Bitmap* icon, const std::wstring& host, IDWriteTextFormat* letterFormat,
+    const D2D1_COLOR_F& tile, const D2D1_COLOR_F& letter)
+{
+    float w = box.right - box.left, h = box.bottom - box.top;
+    float radius = std::min(w, h) * 0.22f;
+    fill(D2D1::RoundedRect(box, radius, radius), tile);
+    D2D1_POINT_2F c = D2D1::Point2F((box.left + box.right) / 2, (box.top + box.bottom) / 2);
+    if (icon) {
+        float s = std::min(w, h) * 0.5f;
+        rt->DrawBitmap(icon, D2D1::RectF(c.x - s / 2, c.y - s / 2, c.x + s / 2, c.y + s / 2), 1.0f,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        return;
+    }
+    std::wstring ch = host.empty() ? std::wstring(L"?") : host.substr(0, 1);
+    if (ch[0] >= L'a' && ch[0] <= L'z')
+        ch[0] = wchar_t(ch[0] - 32);
+    brush->SetColor(letter);
+    rt->DrawTextW(ch.c_str(), UINT32(ch.size()), letterFormat, box, brush);
 }
 
 } // namespace meridian::ui

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <shlobj.h>
 #include <thread>
+#include <type_traits>
 #include <winrt/base.h>
 
 namespace meridian::app {
@@ -76,9 +77,25 @@ int App::run(const std::wstring& initialURL)
     try {
         m_db = std::make_unique<services::Database>(m_profile / L"Meridian.db");
         m_session = std::make_unique<services::SessionStore>(*m_db);
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        platform::log(L"profile database FAILED: %hs", e.what());
         m_session.reset(); // session restore disabled; browsing still works
         m_db.reset();
+    }
+    if (m_db) {
+        // Each service creates its own tables; one failing leaves the others usable.
+        auto open = [&](auto& member, const wchar_t* name) {
+            using T = typename std::remove_reference_t<decltype(member)>::element_type;
+            try {
+                member = std::make_unique<T>(*m_db);
+            } catch (const std::exception& e) {
+                platform::log(L"%ls unavailable: %hs", name, e.what());
+            }
+        };
+        open(m_history, L"history");
+        open(m_bookmarks, L"bookmarks");
+        open(m_settings, L"settings");
+        open(m_icons, L"site icons");
     }
 
     m_engine = std::make_unique<engine::EngineContext>(false, m_profile);
@@ -171,15 +188,105 @@ void App::dumpState(const std::wstring& path)
         }
     }
     out += L"closed " + std::to_wstring(m_closed.size()) + L"\n";
-    int len = WideCharToMultiByte(CP_UTF8, 0, out.c_str(), int(out.size()), nullptr, 0, nullptr, nullptr);
-    std::string utf8(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, out.c_str(), int(out.size()), utf8.data(), len, nullptr, nullptr);
-    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f != INVALID_HANDLE_VALUE) {
-        DWORD written;
-        WriteFile(f, utf8.data(), DWORD(utf8.size()), &written, nullptr);
-        CloseHandle(f);
+    size_t historyCount = 0, favorites = 0, bookmarkCount = 0;
+    try {
+        if (m_history)
+            historyCount = m_history->count();
+        if (m_bookmarks) {
+            favorites = m_bookmarks->children(services::Bookmarks::kFavoritesId).size();
+            bookmarkCount = m_bookmarks->children(services::Bookmarks::kBookmarksId).size();
+        }
+    } catch (const std::exception&) {
     }
+    out += L"data history=" + std::to_wstring(historyCount) + L" favorites=" + std::to_wstring(favorites)
+        + L" bookmarks=" + std::to_wstring(bookmarkCount) + L" suggest=" + std::to_wstring(searchSuggestionsEnabled()) + L"\n";
+    writeTextFile(path, out);
+}
+
+void App::writeTextFile(const std::wstring& path, const std::wstring& text)
+{
+    int len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string utf8(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), int(text.size()), utf8.data(), len, nullptr, nullptr);
+    // Write to a temporary name, then rename: readers never see a half-written file.
+    std::wstring temp = path + L".tmp";
+    HANDLE f = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE)
+        return;
+    DWORD written = 0;
+    BOOL ok = WriteFile(f, utf8.data(), DWORD(utf8.size()), &written, nullptr);
+    CloseHandle(f);
+    if (ok)
+        MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+    else
+        DeleteFileW(temp.c_str());
+}
+
+void App::recordVisit(const engine::EngineContext& context, const std::wstring& url, bool typed)
+{
+    if (context.isEphemeral() || !m_history)
+        return;
+    try {
+        m_history->recordVisit(url, L"", typed);
+    } catch (const std::exception& e) {
+        platform::log(L"history write FAILED: %hs", e.what());
+    }
+}
+
+void App::updateHistoryTitle(const engine::EngineContext& context, const std::wstring& url, const std::wstring& title)
+{
+    if (context.isEphemeral() || !m_history)
+        return;
+    try {
+        m_history->setTitle(url, title);
+    } catch (const std::exception& e) {
+        platform::log(L"history write FAILED: %hs", e.what());
+    }
+}
+
+void App::storeIcon(const engine::EngineContext& context, const std::wstring& host, const services::Bitmap& bmp)
+{
+    if (context.isEphemeral() || !m_icons)
+        return;
+    try {
+        m_icons->put(host, bmp);
+    } catch (const std::exception& e) {
+        platform::log(L"icon write FAILED: %hs", e.what());
+    }
+}
+
+const services::Bitmap& App::siteIcon(const std::wstring& host)
+{
+    static const services::Bitmap none;
+    if (!m_icons)
+        return none;
+    try {
+        return m_icons->get(host);
+    } catch (const std::exception&) {
+        return none;
+    }
+}
+
+bool App::searchSuggestionsEnabled()
+{
+    try {
+        return m_settings && m_settings->getBool(services::settings::kSearchSuggestions, false);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void App::setSearchSuggestionsEnabled(bool on)
+{
+    if (!m_settings)
+        return;
+    try {
+        m_settings->setBool(services::settings::kSearchSuggestions, on);
+    } catch (const std::exception& e) {
+        platform::log(L"settings write FAILED: %hs", e.what());
+    }
+    if (!on)
+        m_searchSuggestions.cancel();
 }
 
 void App::pushClosedTab(ClosedTab tab)

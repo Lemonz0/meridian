@@ -3,8 +3,13 @@
 // favicon cache and the recently-closed-tabs stack.
 #include "engine/WebView.h"
 #include "services/Database.h"
+#include "services/Bookmarks.h"
 #include "services/Favicons.h"
+#include "services/History.h"
+#include "services/IconStore.h"
+#include "services/SearchSuggestions.h"
 #include "services/SessionStore.h"
+#include "services/Settings.h"
 
 #include <filesystem>
 #include <memory>
@@ -42,6 +47,25 @@ public:
     engine::EngineContext& engine() { return *m_engine; }
     services::FaviconLoader& favicons() { return m_favicons; }
 
+    // Profile data. Null if the profile database could not be opened; every
+    // caller must cope (browsing works without them). Service calls can throw
+    // on SQLite errors, so UI code goes through the wrappers below or catches.
+    services::History* history() { return m_history.get(); }
+    services::Bookmarks* bookmarks() { return m_bookmarks.get(); }
+    services::Settings* settings() { return m_settings.get(); }
+    services::IconStore* icons() { return m_icons.get(); }
+    services::SearchSuggestions& searchSuggestions() { return m_searchSuggestions; }
+
+    // No-ops for private (ephemeral) engine contexts.
+    void recordVisit(const engine::EngineContext&, const std::wstring& url, bool typed);
+    void updateHistoryTitle(const engine::EngineContext&, const std::wstring& url, const std::wstring& title);
+    void storeIcon(const engine::EngineContext&, const std::wstring& host, const services::Bitmap&);
+    const services::Bitmap& siteIcon(const std::wstring& host); // empty bitmap if unknown
+    bool searchSuggestionsEnabled();
+    void setSearchSuggestionsEnabled(bool);
+
+    static void writeTextFile(const std::wstring& path, const std::wstring& text); // UTF-8
+
     ui::BrowserWindow* newWindow(const services::SessionWindow* restore, const RECT* bounds, bool addDefaultTab);
     void windowClosing(ui::BrowserWindow*);   // before its tabs are torn down
     void windowDestroyed(ui::BrowserWindow*);
@@ -64,6 +88,11 @@ private:
     std::unique_ptr<engine::EngineContext> m_engine;
     std::unique_ptr<services::Database> m_db;
     std::unique_ptr<services::SessionStore> m_session;
+    std::unique_ptr<services::History> m_history;
+    std::unique_ptr<services::Bookmarks> m_bookmarks;
+    std::unique_ptr<services::Settings> m_settings;
+    std::unique_ptr<services::IconStore> m_icons;
+    services::SearchSuggestions m_searchSuggestions;
     services::FaviconLoader m_favicons;
     std::vector<ui::BrowserWindow*> m_windows;
     std::vector<ClosedTab> m_closed;

@@ -209,6 +209,13 @@ struct WebViewThunks {
         WKFramePolicyListenerUse(listener); // downloads arrive in M6
     }
 
+    static void didCommitNavigation(WKPageRef, WKNavigationRef, WKTypeRef, const void* info)
+    {
+        auto& v = self(info);
+        if (v.m_callbacks.navigationCommitted)
+            v.m_callbacks.navigationCommitted(v.url());
+    }
+
     static void didFinishNavigation(WKPageRef, WKNavigationRef, WKTypeRef, const void* info)
     {
         self(info).requestFavicon();
@@ -421,6 +428,7 @@ void WebView::installClients()
     nav.base.clientInfo = this;
     nav.decidePolicyForNavigationAction = WebViewThunks::decidePolicyForNavigationAction;
     nav.decidePolicyForNavigationResponse = WebViewThunks::decidePolicyForNavigationResponse;
+    nav.didCommitNavigation = WebViewThunks::didCommitNavigation;
     nav.didFinishNavigation = WebViewThunks::didFinishNavigation;
     nav.didFailProvisionalNavigation = WebViewThunks::didFailProvisional;
     nav.didReceiveAuthenticationChallenge = WebViewThunks::didReceiveAuthenticationChallenge;

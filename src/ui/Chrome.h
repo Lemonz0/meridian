@@ -5,6 +5,7 @@
 #include "services/Favicons.h"
 
 #include <d2d1_1.h>
+#include <string>
 #include <dwrite_3.h>
 #include <wrl/client.h>
 
@@ -35,6 +36,12 @@ constexpr float kOverviewGap = 28;
 constexpr float kOverviewRadius = 12;
 }
 
+namespace tokens {
+constexpr float kSuggestionRowHeight = 34;
+constexpr float kSuggestionHeaderHeight = 24;
+constexpr float kSuggestionRadius = 12;
+}
+
 struct Palette {
     D2D1_COLOR_F toolbarOpaque, fieldIdle, fieldFocused, text, secondary, hover, pressed, accent, banner;
     D2D1_COLOR_F stripBackground, tabActive, tabSeparator, overviewBackground, cardBackground, shadow;
@@ -59,6 +66,11 @@ struct Painter {
     void plus(D2D1_POINT_2F center, float half, const D2D1_COLOR_F&);
     void tabGrid(D2D1_POINT_2F center, const D2D1_COLOR_F&);
     void globe(D2D1_POINT_2F center, float radius, const D2D1_COLOR_F&); // fallback favicon
+    void magnifier(D2D1_POINT_2F center, const D2D1_COLOR_F&);           // search rows
+    void clock(D2D1_POINT_2F center, float radius, const D2D1_COLOR_F&); // history rows without an icon
+    // Site icon if there is one, else a rounded tile with the host's first letter.
+    void siteTile(D2D1_RECT_F box, ID2D1Bitmap* icon, const std::wstring& host, IDWriteTextFormat* letterFormat,
+        const D2D1_COLOR_F& tile, const D2D1_COLOR_F& letter);
     void spinner(D2D1_POINT_2F center, float radius, double progress, const D2D1_COLOR_F&);
 };
 
