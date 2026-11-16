@@ -9,7 +9,8 @@ A Windows 10/11 (x64) web browser built on the open-source **WebKit WinCairo** p
 |---|---|
 | 1. Toolchain + WebKit Windows-port build + MiniBrowser loads webkit.org | **done**: 38 min build, see `docs/screenshots/m1-*` |
 | 2. Shell skeleton: window, one WebKit view, address field, back/forward/reload, progress | **done**: `tools/smoke-m2.ps1` 13/13, see `docs/screenshots/m2-*` |
-| 3–8 | not started |
+| 3. Tabs: favicons, titles, reorder, pinned, overview, session restore | **done**: `tools/smoke-m3.ps1` 23/23, see `docs/screenshots/m3-*` |
+| 4–8 | not started |
 
 Upstream's Windows port now uses **Skia** (`USE_SKIA=ON`); it was formerly "WinCairo". It's the same port, with only the graphics backend changed.
 
@@ -45,3 +46,15 @@ Every exact command and version is in [BUILD_NOTES.md](BUILD_NOTES.md). Short ve
 | Back / Forward | Alt+←/→, Ctrl+[ / Ctrl+], mouse X1/X2 |
 | Stop loading | Esc |
 | Web Inspector | F12, Ctrl+Alt+I, Ctrl+Shift+I |
+| New tab / close tab / reopen closed tab | Ctrl+T / Ctrl+W / Ctrl+Shift+T |
+| New window / close window | Ctrl+N / Ctrl+Shift+W |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+PgDn / Ctrl+PgUp, Ctrl+Shift+] / [ |
+| Go to tab 1–8 / last tab | Ctrl+1…8 / Ctrl+9 |
+| Tab overview | Ctrl+Shift+\ (arrows to move, Enter to open, Delete to close, Esc to exit) |
+
+Mouse:
+- Click a tab to select it.
+- Drag tabs to reorder them, or drag a tab out of the bar to move it to a new window.
+- Middle-click a tab to close it.
+- Right-click a tab for Pin, Duplicate, Move to New Window, and Close Others/Right.
+- Ctrl+click or middle-click a link to open it in a background tab. Ctrl+Shift+click opens it in front.

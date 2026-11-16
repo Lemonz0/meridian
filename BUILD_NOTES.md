@@ -82,6 +82,35 @@ Screenshots: `tools\capture-window.ps1 -ProcessName Meridian -Screen -Out x.png`
   - Verify the chain with `CertGetCertificateChain` + `CERT_CHAIN_POLICY_SSL`, which fetches missing roots.
   - Retry once with full curl verification.
 
+## M3 notes (tabs)
+- **SQLite** comes from WebKit's vcpkg tree (`vcpkg_installed/x64-windows-webkit`, 3.53.4). `sqlite3.dll` is already in the shipped WebKit runtime, so it adds no new dependency. The DB is `<profile>\Meridian.db` in WAL mode.
+- **Session state:**
+  - With a null `context`, `WKPageCopySessionState` returns a **`WKDataRef`**, not a `WKSessionStateRef`. This is a compatibility hack in `WKPage.cpp`.
+  - On non-Cocoa ports that data is WebKit's **IPC wire format** (`LegacySessionStateCodingNone.cpp`), so it may not decode with a different WebKit build.
+  - Meridian stores it as-is. On restore, a null from `WKSessionStateCreateFromData` falls back to loading the URL.
+- **Thumbnails** use Windows.Graphics.Capture (`platform/WindowCapture.cpp`, C++/WinRT, links `windowsapp`). Ruled out:
+  - `WM_PRINTCLIENT` to the WKView: WebKit handles it, but with GPU compositing it paints black (`tools/probe-printclient.ps1`).
+  - The bundle snapshot API: it returns an `SkImage`, and Skia's pixel accessors aren't exported from WebKit2.dll.
+- **WGC on our own window from its UI thread:**
+  - The wait for the first frame must dispatch *sent* messages (`MsgWaitForMultipleObjects` + `PM_QS_SENDMESSAGE`).
+  - WinRT calls fail with `RPC_E_CANTCALLOUT_ININPUTSYNCCALL` (0x8001010D) inside a cross-process `SendMessage`. That's why automation commands are re-posted.
+  - One-shot capture takes about 32–47 ms (logged).
+- **Teardown crash (fixed):** destroying a WKView fires state callbacks (`0xc000041d` in WebKit2.dll). `~WebView` now unhooks all page clients first, and tabs are moved out of the vector before they're destroyed.
+- **PowerShell gotcha in test scripts:** `$null` passed to a .NET `string` parameter arrives as `""`. Declare optional `LPCWSTR` P/Invoke parameters as `IntPtr` and pass `[IntPtr]::Zero`.
+
+## Test tools
+| Tool | What it covers |
+|---|---|
+| `build\bin\meridian_tests.exe` | Unit tests: URL fixup, SQLite session store, favicon decoding |
+| `tools\smoke-m2.ps1` | Navigation, search, back/forward, certificate errors (temp profile) |
+| `tools\smoke-m3.ps1` | Tabs end to end, including quit and relaunch (temp profile, `--automation`) |
+| `tools\probe-caption.ps1` | Min/max/close hit-testing, windowed and maximized |
+| `tools\capture-window.ps1` | Screenshots. `-Screen` refuses to save unless the window is verifiably on top |
+
+Command-line flags:
+- `--profile=<dir>` uses a separate profile.
+- `--automation` enables the test command channel (`WM_COPYDATA`) and writes `<profile>\meridian.log`. It's off by default, so other local programs can't drive the browser.
+
 ## Log
 - 2026-11-16 21:25: started the first WebKit release build.
 - 2026-11-16: services unit tests 8/8 pass. They caught a fixup bug where `http://x` was parsed as host:port with an empty port.
@@ -92,3 +121,12 @@ Screenshots: `tools\capture-window.ps1 -ProcessName Meridian -Screen -Out x.png`
   - window appears 0.11 s after launch
   - about 400–500 MB working set across UI, web, network and GPU processes after visiting 6 sites
   **M2 verified.**
+- 2026-11-16: the user reported that min/max/close didn't work when maximized. Fixed with direct hit-testing of `DWMWA_CAPTION_BUTTON_BOUNDS`; probe 7/7.
+- 2026-11-16: M3 tabs. Unit tests 16/16, M2 13/13, M3 23/23, caption 7/7, no crash events. Bugs found and fixed during verification:
+  - close-time crash
+  - session state silently empty (the `WKDataRef` hack)
+  - thumbnails failing in-process
+  - EDIT control translucent over Mica (fixed with `WS_EX_LAYERED`)
+  - black thumbnails from tabs that hadn't painted yet
+
+  **M3 verified** (gaps listed in FEATURE_STATUS).

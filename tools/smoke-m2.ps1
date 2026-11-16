@@ -20,7 +20,8 @@ function Check($name, $ok, $detail) { $script:results += [pscustomobject]@{ Test
 
 Get-Process Meridian -ErrorAction SilentlyContinue | Stop-Process; Start-Sleep 1
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$proc = Start-Process $Exe -ArgumentList 'about:blank' -PassThru
+$profileDir = Join-Path $env:TEMP ('meridian-smoke2-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$proc = Start-Process $Exe -ArgumentList @("--profile=$profileDir", 'about:blank') -PassThru
 while ($proc.MainWindowHandle -eq 0 -and $sw.Elapsed.TotalSeconds -lt 15) { Start-Sleep -Milliseconds 50; $proc.Refresh() }
 Check 'window appears' ($proc.MainWindowHandle -ne 0) ("{0:N2}s to first window" -f $sw.Elapsed.TotalSeconds)
 $main = $proc.MainWindowHandle
@@ -50,5 +51,6 @@ $mem = Get-Process Meridian, WebKitWebProcess, WebKitNetworkProcess, WebKitGPUPr
   Measure-Object WorkingSet64 -Sum
 Check 'memory (all processes)' $true ("{0:N0} MB working set" -f ($mem.Sum / 1MB))
 
+Get-Process Meridian -ErrorAction SilentlyContinue | Stop-Process; Start-Sleep 1; Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
 $results | Format-Table -AutoSize | Out-String -Width 200
 if ($results.Result -contains 'FAIL') { exit 1 }

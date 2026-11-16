@@ -7,6 +7,13 @@
 #include <WebKit/WKAuthenticationDecisionListener.h>
 #include <WebKit/WKContext.h>
 #include <WebKit/WKData.h>
+#include <WebKit/WKFrameInfoRef.h>
+#include <WebKit/WKFramePolicyListener.h>
+#include <WebKit/WKNavigationActionRef.h>
+#include <WebKit/WKPageLoadTypes.h>
+#include <WebKit/WKPageUIClient.h>
+#include <WebKit/WKSessionStateRef.h>
+#include <WebKit/WKURLRequest.h>
 #include <WebKit/WKProtectionSpace.h>
 #include <WebKit/WKProtectionSpaceCurl.h>
 #include <WebKit/WKContextConfigurationRef.h>
@@ -76,19 +83,7 @@ WKPtr<WKURLRef> makeWKURL(const std::wstring& w)
 
 // ---- EngineContext --------------------------------------------------------
 
-static std::filesystem::path profileDirectory()
-{
-    PWSTR base = nullptr;
-    std::filesystem::path dir;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base)))
-        dir = std::filesystem::path(base) / L"Meridian" / L"Default";
-    CoTaskMemFree(base);
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return dir;
-}
-
-EngineContext::EngineContext(bool ephemeral)
+EngineContext::EngineContext(bool ephemeral, const std::filesystem::path& profile)
     : m_ephemeral(ephemeral)
 {
     auto contextConf = adoptWK(WKContextConfigurationCreate());
@@ -98,7 +93,7 @@ EngineContext::EngineContext(bool ephemeral)
         // Private browsing: nothing touches disk.
         m_dataStore = adoptWK(WKWebsiteDataStoreCreateNonPersistentDataStore());
     } else {
-        auto dir = profileDirectory();
+        const auto& dir = profile;
         auto conf = adoptWK(WKWebsiteDataStoreConfigurationCreate());
         auto sub = [&](const wchar_t* name) { return makeWKString((dir / name).wstring()); };
         WKWebsiteDataStoreConfigurationSetGeneralStorageDirectory(conf.get(), sub(L"Storage").get());
@@ -124,6 +119,29 @@ WKPageConfigurationRef EngineContext::newPageConfiguration() const
     WKPageConfigurationSetWebsiteDataStore(conf, m_dataStore.get());
     WKPageConfigurationSetPreferences(conf, m_preferences.get());
     return conf; // caller adopts
+}
+
+// ---- input hints for "open link in new tab" ---------------------------------
+
+namespace {
+struct ClickHint {
+    DWORD tick { 0 };
+    bool middle { false };
+    bool ctrl { false };
+    bool shift { false };
+};
+ClickHint g_lastClick;
+std::set<const WebView*> g_liveViews; // guards async callbacks against destroyed views
+}
+
+void WebView::noteInput(const MSG& msg)
+{
+    if (msg.message == WM_MBUTTONUP || msg.message == WM_LBUTTONUP) {
+        g_lastClick.tick = GetTickCount();
+        g_lastClick.middle = msg.message == WM_MBUTTONUP;
+        g_lastClick.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        g_lastClick.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    }
 }
 
 // ---- WebView --------------------------------------------------------------
@@ -166,6 +184,36 @@ struct WebViewThunks {
         if (v.m_callbacks.backForwardChanged)
             v.m_callbacks.backForwardChanged();
     }
+
+    static void decidePolicyForNavigationAction(WKPageRef, WKNavigationActionRef action, WKFramePolicyListenerRef listener, WKTypeRef, const void* info)
+    {
+        auto& v = self(info);
+        bool linkClick = WKNavigationActionGetNavigationType(action) == kWKFrameNavigationTypeLinkClicked;
+        bool recentClick = GetTickCount() - g_lastClick.tick < 600;
+        if (linkClick && recentClick && (g_lastClick.middle || g_lastClick.ctrl) && v.m_callbacks.openInNewTab) {
+            auto request = adoptWK(WKNavigationActionCopyRequest(action));
+            auto url = toWString(adoptWK(WKURLRequestCopyURL(request.get())).get());
+            g_lastClick.tick = 0; // one click -> one tab
+            if (!url.empty()) {
+                WKFramePolicyListenerIgnore(listener);
+                // Safari: Ctrl+click opens in background; Ctrl+Shift+click in front.
+                v.m_callbacks.openInNewTab(url, g_lastClick.shift);
+                return;
+            }
+        }
+        WKFramePolicyListenerUse(listener);
+    }
+
+    static void decidePolicyForNavigationResponse(WKPageRef, WKNavigationResponseRef, WKFramePolicyListenerRef listener, WKTypeRef, const void*)
+    {
+        WKFramePolicyListenerUse(listener); // downloads arrive in M6
+    }
+
+    static void didFinishNavigation(WKPageRef, WKNavigationRef, WKTypeRef, const void* info)
+    {
+        self(info).requestFavicon();
+    }
+
     static void didFailProvisional(WKPageRef, WKNavigationRef, WKErrorRef error, WKTypeRef, const void* info)
     {
         auto& v = self(info);
@@ -240,20 +288,61 @@ struct WebViewThunks {
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
+
     static void webProcessDidCrash(WKPageRef, const void* info)
     {
         auto& v = self(info);
+        v.m_isLoading = false;
         if (v.m_callbacks.webProcessCrashed)
             v.m_callbacks.webProcessCrashed();
     }
+
+    // UI client
+    static WKPageRef createNewPage(WKPageRef, WKPageConfigurationRef conf, WKNavigationActionRef, WKWindowFeaturesRef, const void* info)
+    {
+        auto& v = self(info);
+        if (!v.m_callbacks.createNewPage)
+            return nullptr;
+        WebView* created = v.m_callbacks.createNewPage(conf);
+        if (!created)
+            return nullptr;
+        WKPageRef page = created->page();
+        WKRetain(page); // WebKit adopts the returned reference
+        return page;
+    }
+    static void close(WKPageRef, const void* info)
+    {
+        auto& v = self(info);
+        if (v.m_callbacks.closeRequested)
+            v.m_callbacks.closeRequested();
+    }
+
+    static void faviconScriptDone(WKTypeRef result, WKErrorRef, void* context)
+    {
+        auto* v = static_cast<WebView*>(context);
+        if (!g_liveViews.count(v) || !result || WKGetTypeID(result) != WKStringGetTypeID())
+            return;
+        auto iconURL = toWString(static_cast<WKStringRef>(result));
+        if (!iconURL.empty() && v->m_callbacks.faviconURLChanged)
+            v->m_callbacks.faviconURLChanged(iconURL);
+    }
 };
 
-WebView::WebView(EngineContext& engine, HWND parent, WebViewCallbacks callbacks)
-    : m_callbacks(std::move(callbacks))
+WebView::WebView(EngineContext& engine, HWND parent)
 {
     auto conf = adoptWK(engine.newPageConfiguration());
+    initialize(conf.get(), parent);
+}
+
+WebView::WebView(WKPageConfigurationRef conf, HWND parent)
+{
+    initialize(conf, parent);
+}
+
+void WebView::initialize(WKPageConfigurationRef conf, HWND parent)
+{
     RECT r {};
-    m_view = adoptWK(WKViewCreate(r, conf.get(), parent));
+    m_view = adoptWK(WKViewCreate(r, conf, parent));
     WKViewSetIsInWindow(m_view.get(), true);
 
     static bool registered = false;
@@ -269,18 +358,31 @@ WebView::WebView(EngineContext& engine, HWND parent, WebViewCallbacks callbacks)
         GetModuleHandleW(nullptr), nullptr);
     SetWindowLongPtrW(m_messageWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
+    g_liveViews.insert(this);
     installClients();
 }
 
 WebView::~WebView()
 {
+    g_liveViews.erase(this);
+    // Teardown makes WebKit fire state/navigation callbacks (e.g. loading
+    // changed). Unhook every client first so none reach a half-destroyed tab.
+    m_callbacks = {};
+    if (m_view) {
+        WKPageSetPageStateClient(page(), nullptr);
+        WKPageSetPageNavigationClient(page(), nullptr);
+        WKPageSetPageUIClient(page(), nullptr);
+    }
     if (m_messageWindow) {
         SetWindowLongPtrW(m_messageWindow, GWLP_USERDATA, 0);
         DestroyWindow(m_messageWindow);
     }
-    if (m_view)
-        WKPageClose(page());
+    // Destroying WKView's HWND makes WebKit close the page (WebView::closeInternal).
+    if (m_view && IsWindow(hwnd()))
+        DestroyWindow(hwnd());
 }
+
+void WebView::setCallbacks(WebViewCallbacks callbacks) { m_callbacks = std::move(callbacks); }
 
 void WebView::onTrustVerified(const std::wstring& host, bool trusted, const std::wstring& description)
 {
@@ -317,14 +419,53 @@ void WebView::installClients()
     WKPageNavigationClientV0 nav {};
     nav.base.version = 0;
     nav.base.clientInfo = this;
+    nav.decidePolicyForNavigationAction = WebViewThunks::decidePolicyForNavigationAction;
+    nav.decidePolicyForNavigationResponse = WebViewThunks::decidePolicyForNavigationResponse;
+    nav.didFinishNavigation = WebViewThunks::didFinishNavigation;
     nav.didFailProvisionalNavigation = WebViewThunks::didFailProvisional;
     nav.didReceiveAuthenticationChallenge = WebViewThunks::didReceiveAuthenticationChallenge;
     nav.webProcessDidCrash = WebViewThunks::webProcessDidCrash;
     WKPageSetPageNavigationClient(page(), &nav.base);
+
+    WKPageUIClientV13 ui {};
+    ui.base.version = 13;
+    ui.base.clientInfo = this;
+    ui.createNewPage = WebViewThunks::createNewPage;
+    ui.close = WebViewThunks::close;
+    WKPageSetPageUIClient(page(), &ui.base);
+}
+
+void WebView::requestFavicon()
+{
+    // Picks the best raster icon the page declares (SVG is not decoded yet),
+    // falling back to /favicon.ico. Runs in the page's world, so the result is
+    // treated as untrusted input by the loader (scheme/size limits).
+    static const wchar_t* script = LR"JS((() => {
+  let best = null, bestScore = -1e9;
+  for (const l of document.querySelectorAll('link[rel]')) {
+    const rel = (l.getAttribute('rel') || '').toLowerCase();
+    if (!/(^|\s)(icon|shortcut|apple-touch-icon)(\s|$)/.test(rel) || !l.href) continue;
+    const type = (l.type || '').toLowerCase();
+    if (type.includes('svg') || /\.svg(\?|#|$)/i.test(l.href)) continue;
+    const size = parseInt((l.getAttribute('sizes') || '').split(/[x\s]/)[0]) || 0;
+    let score = size ? 100 - Math.abs(size - 32) : 40;
+    if (rel.includes('apple-touch-icon')) score -= 30;
+    if (score > bestScore) { bestScore = score; best = l.href; }
+  }
+  if (best) return best;
+  return /^https?:$/.test(location.protocol) ? new URL('/favicon.ico', location.href).href : '';
+})())JS";
+    WKPageEvaluateJavaScriptInMainFrame(page(), makeWKString(script).get(), this, WebViewThunks::faviconScriptDone);
 }
 
 WKPageRef WebView::page() const { return WKViewGetPage(m_view.get()); }
 HWND WebView::hwnd() const { return WKViewGetWindow(m_view.get()); }
+
+void WebView::setParentWindow(HWND parent)
+{
+    WKViewSetParentWindow(m_view.get(), parent);
+    WKViewWindowAncestryDidChange(m_view.get());
+}
 
 void WebView::setBounds(const RECT& r)
 {
@@ -334,6 +475,7 @@ void WebView::setBounds(const RECT& r)
 void WebView::setVisible(bool visible)
 {
     ShowWindow(hwnd(), visible ? SW_SHOW : SW_HIDE);
+    // Hidden tabs are "not in window", so WebKit throttles timers and painting.
     WKViewSetIsInWindow(m_view.get(), visible);
 }
 
@@ -351,4 +493,39 @@ double WebView::progress() const { return WKPageGetEstimatedProgress(page()); }
 std::wstring WebView::title() const { return toWString(adoptWK(WKPageCopyTitle(page())).get()); }
 std::wstring WebView::url() const { return toWString(adoptWK(WKPageCopyActiveURL(page())).get()); }
 
+std::vector<uint8_t> WebView::sessionState() const
+{
+    // With a null context, WKPageCopySessionState returns a WKDataRef holding
+    // WebKit's "legacy" encoding (a compatibility hack in WKPage.cpp); a
+    // context with the low bit set would return a WKSessionStateRef instead.
+    // On non-Cocoa ports that encoding is WebKit's IPC wire format, so it is
+    // only guaranteed to decode with the same WebKit build (see restore).
+    auto state = adoptWK(WKPageCopySessionState(page(), nullptr, nullptr));
+    if (!state)
+        return {};
+    WKPtr<WKDataRef> data;
+    if (WKGetTypeID(state.get()) == WKDataGetTypeID())
+        data = WKPtr<WKDataRef>::retain(static_cast<WKDataRef>(state.get()));
+    else if (WKGetTypeID(state.get()) == WKSessionStateGetTypeID())
+        data = adoptWK(WKSessionStateCopyData(static_cast<WKSessionStateRef>(state.get())));
+    if (!data)
+        return {};
+    const uint8_t* bytes = WKDataGetBytes(data.get());
+    return { bytes, bytes + WKDataGetSize(data.get()) };
+}
+
+bool WebView::restoreSessionState(const std::vector<uint8_t>& bytes)
+{
+    if (bytes.empty())
+        return false;
+    auto data = adoptWK(WKDataCreate(bytes.data(), bytes.size()));
+    // Returns null if the blob does not decode (e.g. saved by another WebKit build).
+    auto state = adoptWK(WKSessionStateCreateFromData(data.get()));
+    if (!state)
+        return false;
+    WKPageRestoreFromSessionState(page(), state.get());
+    return true;
+}
+
 } // namespace meridian::engine
+

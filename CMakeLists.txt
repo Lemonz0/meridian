@@ -16,11 +16,37 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # string literals like L"’" end up garbled ("Couldnâ€™t").
 add_compile_options(/utf-8)
 
-# --- services: pure C++, no WebKit dependency (unit-testable) ---------------
+# SQLite comes from WebKit's own vcpkg tree; sqlite3.dll is already part of
+# the WebKit runtime we ship, so this adds no new dependency.
+set(SQLITE_ROOT "${WEBKIT_BUILD_DIR}/vcpkg_installed/x64-windows-webkit")
+find_path(SQLITE_INCLUDE_DIR sqlite3.h PATHS "${SQLITE_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
+find_library(SQLITE_LIB sqlite3 PATHS "${SQLITE_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+
+# --- platform: Windows integration, no WebKit dependency --------------------
+add_library(meridian_platform STATIC
+    src/platform/CertificateTrust.cpp
+    src/platform/Log.cpp
+    src/platform/SystemTheme.cpp
+    src/platform/UiDispatcher.cpp
+    src/platform/WindowCapture.cpp
+)
+target_include_directories(meridian_platform PUBLIC src)
+target_link_libraries(meridian_platform PUBLIC dwmapi crypt32 d3d11 dxgi windowsapp)
+
+# --- services: no WebKit dependency (unit-testable) -------------------------
 add_library(meridian_services STATIC
+    src/services/Database.cpp
+    src/services/Favicons.cpp
+    src/services/SessionStore.cpp
     src/services/UrlFixup.cpp
 )
-target_include_directories(meridian_services PUBLIC src)
+target_include_directories(meridian_services PUBLIC src PRIVATE "${SQLITE_INCLUDE_DIR}")
+target_link_libraries(meridian_services PUBLIC meridian_platform "${SQLITE_LIB}" winhttp windowscodecs shlwapi ole32)
+
+function(meridian_copy_sqlite target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SQLITE_ROOT}/bin/sqlite3.dll" "$<TARGET_FILE_DIR:${target}>")
+endfunction()
 
 # --- browser ----------------------------------------------------------------
 if(MERIDIAN_BUILD_APP)
@@ -35,15 +61,21 @@ if(MERIDIAN_BUILD_APP)
 
     add_executable(Meridian WIN32
         src/app/main.cpp
+        src/app/App.cpp
         src/app/Meridian.manifest
         src/engine/WebView.cpp
-        src/platform/CertificateTrust.cpp
-        src/platform/SystemTheme.cpp
         src/ui/BrowserWindow.cpp
+        src/ui/Chrome.cpp
+        src/ui/TabStrip.cpp
+        src/ui/TabOverview.cpp
     )
     target_include_directories(Meridian PRIVATE src "${WEBKIT_HEADERS_DIR}")
-    target_link_libraries(Meridian PRIVATE meridian_services "${WEBKIT_LIB}"
-        d2d1 dwrite dwmapi comctl32 shell32 ole32 uxtheme crypt32)
+    target_link_libraries(Meridian PRIVATE meridian_services meridian_platform "${WEBKIT_LIB}"
+        d2d1 dwrite comctl32 shell32 uxtheme)
+
+    # Dev probe for Windows.Graphics.Capture (not shipped).
+    add_executable(meridian_capture_probe tools/capture_probe.cpp)
+    target_link_libraries(meridian_capture_probe PRIVATE meridian_platform)
 
     # Stage only the WebKit runtime (DLLs, helper processes, resources) next to
     # Meridian.exe — not the ~3 GB of PDBs and test binaries.
@@ -56,7 +88,9 @@ endif()
 # --- tests ------------------------------------------------------------------
 if(MERIDIAN_BUILD_TESTS)
     enable_testing()
-    add_executable(meridian_tests tests/test_main.cpp tests/UrlFixupTests.cpp)
+    add_executable(meridian_tests tests/test_main.cpp tests/UrlFixupTests.cpp
+        tests/SessionStoreTests.cpp tests/FaviconTests.cpp)
     target_link_libraries(meridian_tests PRIVATE meridian_services)
+    meridian_copy_sqlite(meridian_tests)
     add_test(NAME services COMMAND meridian_tests)
 endif()
