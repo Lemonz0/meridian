@@ -7,9 +7,11 @@ A Windows 10/11 (x64) web browser built on the open-source **WebKit WinCairo** p
 ## Status
 | Milestone | State |
 |---|---|
-| 1. Toolchain + WinCairo build + MiniBrowser loads webkit.org | in progress (build running) |
-| 2. Shell skeleton: window, one WebKit view, address field, back/forward/reload, progress | code written, waiting on the engine build |
+| 1. Toolchain + WebKit Windows-port build + MiniBrowser loads webkit.org | **done**: 38 min build, see `docs/screenshots/m1-*` |
+| 2. Shell skeleton: window, one WebKit view, address field, back/forward/reload, progress | **done**: `tools/smoke-m2.ps1` 13/13, see `docs/screenshots/m2-*` |
 | 3–8 | not started |
+
+Upstream's Windows port now uses **Skia** (`USE_SKIA=ON`); it was formerly "WinCairo". It's the same port, with only the graphics backend changed.
 
 Per-feature status is in [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md). Notes on the glass renderer are in [docs/GLASS_NOTES.md](docs/GLASS_NOTES.md).
 

@@ -4,6 +4,7 @@
 #include <WebKit/WKPageConfigurationRef.h>
 #include <WebKit/WKView.h>
 #include <functional>
+#include <set>
 #include <string>
 #include <windows.h>
 
@@ -60,10 +61,20 @@ public:
 private:
     WKPageRef page() const;
     void installClients();
+    void onTrustVerified(const std::wstring& host, bool trusted, const std::wstring& description);
 
     WebViewCallbacks m_callbacks;
     WKPtr<WKViewRef> m_view;
     bool m_isLoading { false };
+
+    // Server-trust fallback (see platform/CertificateTrust.h). Curl verification
+    // is never disabled: we reject, verify with Windows (which installs missing
+    // roots), then retry the navigation once with full verification.
+    HWND m_messageWindow { nullptr };
+    std::set<std::wstring> m_trustPending;   // hosts being verified
+    std::set<std::wstring> m_trustRetried;   // hosts already retried once
+    std::wstring m_failedWhilePending;       // URL whose load failed during verification
+    std::wstring m_failedDescription;
 
     friend struct WebViewThunks;
 };

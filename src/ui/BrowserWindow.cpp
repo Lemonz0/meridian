@@ -7,6 +7,7 @@
 #include <cmath>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <uxtheme.h>
 #include <windowsx.h>
 
 namespace meridian::ui {
@@ -167,6 +168,13 @@ void BrowserWindow::updateTheme()
 
     MARGINS margins { 0, 0, px(tokens::kToolbarHeight), 0 };
     DwmExtendFrameIntoClientArea(m_hwnd, &margins);
+
+    // The toolbar is painted transparent so the backdrop shows through; stop
+    // DWM from drawing the caption text/icon into that area (the taskbar and
+    // Alt+Tab still use the window title). Caption buttons are kept.
+    WTA_OPTIONS nc { WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON | WTNCA_NOSYSMENU,
+                     WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON | WTNCA_NOSYSMENU };
+    SetWindowThemeAttribute(m_hwnd, WTA_NONCLIENT, &nc, sizeof(nc));
 
     if (m_editFont)
         DeleteObject(m_editFont);

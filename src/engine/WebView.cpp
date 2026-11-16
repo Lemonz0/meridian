@@ -1,8 +1,16 @@
 #include "WebView.h"
 
+#include "platform/CertificateTrust.h"
+
+#include <WebKit/WKArray.h>
+#include <WebKit/WKAuthenticationChallenge.h>
+#include <WebKit/WKAuthenticationDecisionListener.h>
 #include <WebKit/WKContext.h>
+#include <WebKit/WKData.h>
+#include <WebKit/WKProtectionSpace.h>
+#include <WebKit/WKProtectionSpaceCurl.h>
 #include <WebKit/WKContextConfigurationRef.h>
-#include <WebKit/WKError.h>
+#include <WebKit/WKErrorRef.h>
 #include <WebKit/WKInspector.h>
 #include <WebKit/WKPage.h>
 #include <WebKit/WKPageNavigationClient.h>
@@ -15,7 +23,10 @@
 #include <WebKit/WKWebsiteDataStoreRef.h>
 
 #include <filesystem>
+#include <memory>
 #include <shlobj.h>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace meridian::engine {
@@ -159,9 +170,75 @@ struct WebViewThunks {
     {
         auto& v = self(info);
         auto desc = toWString(adoptWK(WKErrorCopyLocalizedDescription(error)).get());
-        auto url = toWString(adoptWK(WKErrorCopyFailingURL(error)).get());
+        auto failingURL = adoptWK(WKErrorCopyFailingURL(error));
+        auto url = toWString(failingURL.get());
+        auto host = failingURL ? toWString(adoptWK(WKURLCopyHostName(failingURL.get())).get()) : std::wstring();
+        if (v.m_trustPending.count(host)) {
+            // Windows is still verifying this host's chain; decide after it finishes.
+            v.m_failedWhilePending = url;
+            v.m_failedDescription = desc;
+            return;
+        }
         if (v.m_callbacks.loadFailed)
             v.m_callbacks.loadFailed(url, desc);
+    }
+
+    static void didReceiveAuthenticationChallenge(WKPageRef, WKAuthenticationChallengeRef challenge, const void* info)
+    {
+        auto& v = self(info);
+        auto space = WKAuthenticationChallengeGetProtectionSpace(challenge);
+        auto listener = WKAuthenticationChallengeGetDecisionListener(challenge);
+
+        if (WKProtectionSpaceGetAuthenticationScheme(space) != kWKProtectionSpaceAuthenticationSchemeServerTrustEvaluationRequested) {
+            // HTTP auth UI is not implemented yet (M6): continue without credentials.
+            WKAuthenticationDecisionListenerUseCredential(listener, nullptr);
+            return;
+        }
+
+        // Never accept here: accepting makes WebKit retry with verification
+        // disabled. Reject, then verify with Windows off the UI thread.
+        WKAuthenticationDecisionListenerCancel(listener);
+
+        auto host = toWString(adoptWK(WKProtectionSpaceCopyHost(space)).get());
+        if (v.m_trustRetried.count(host) || v.m_trustPending.count(host))
+            return; // already tried once; let the failure surface
+
+        std::vector<std::string> pems;
+        auto chain = adoptWK(WKProtectionSpaceCopyCertificateChain(space));
+        for (size_t i = 0; chain && i < WKArrayGetSize(chain.get()); ++i) {
+            auto item = WKArrayGetItemAtIndex(chain.get(), i);
+            if (WKGetTypeID(item) != WKDataGetTypeID())
+                continue;
+            auto data = static_cast<WKDataRef>(item);
+            pems.emplace_back(reinterpret_cast<const char*>(WKDataGetBytes(data)), WKDataGetSize(data));
+        }
+
+        v.m_trustPending.insert(host);
+        HWND reply = v.m_messageWindow;
+        std::thread([reply, host, pems = std::move(pems)] {
+            auto result = platform::verifyServerChain(pems, host);
+            auto* msg = new TrustMessage { host, result.trusted, result.description };
+            if (!PostMessageW(reply, kTrustMessage, 0, reinterpret_cast<LPARAM>(msg)))
+                delete msg; // view already destroyed
+        }).detach();
+    }
+
+    struct TrustMessage {
+        std::wstring host;
+        bool trusted;
+        std::wstring description;
+    };
+    static constexpr UINT kTrustMessage = WM_APP + 1;
+
+    static LRESULT CALLBACK messageProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        if (msg == kTrustMessage) {
+            std::unique_ptr<TrustMessage> m(reinterpret_cast<TrustMessage*>(lp));
+            if (auto* v = reinterpret_cast<WebView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
+                v->onTrustVerified(m->host, m->trusted, m->description);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     }
     static void webProcessDidCrash(WKPageRef, const void* info)
     {
@@ -178,13 +255,49 @@ WebView::WebView(EngineContext& engine, HWND parent, WebViewCallbacks callbacks)
     RECT r {};
     m_view = adoptWK(WKViewCreate(r, conf.get(), parent));
     WKViewSetIsInWindow(m_view.get(), true);
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc {};
+        wc.lpfnWndProc = WebViewThunks::messageProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"MeridianEngineMessages";
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    m_messageWindow = CreateWindowW(L"MeridianEngineMessages", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
+    SetWindowLongPtrW(m_messageWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
     installClients();
 }
 
 WebView::~WebView()
 {
+    if (m_messageWindow) {
+        SetWindowLongPtrW(m_messageWindow, GWLP_USERDATA, 0);
+        DestroyWindow(m_messageWindow);
+    }
     if (m_view)
         WKPageClose(page());
+}
+
+void WebView::onTrustVerified(const std::wstring& host, bool trusted, const std::wstring& description)
+{
+    m_trustPending.erase(host);
+    m_trustRetried.insert(host);
+    std::wstring failed = std::exchange(m_failedWhilePending, {});
+    std::wstring failedDescription = std::exchange(m_failedDescription, {});
+    if (failed.empty())
+        return; // a subresource; the page itself loaded
+    if (trusted) {
+        // Windows trusts the chain and has installed any missing root, so a
+        // fresh, fully verified connection should now succeed.
+        loadURL(failed);
+        return;
+    }
+    if (m_callbacks.loadFailed)
+        m_callbacks.loadFailed(failed, description.empty() ? failedDescription : description);
 }
 
 void WebView::installClients()
@@ -205,6 +318,7 @@ void WebView::installClients()
     nav.base.version = 0;
     nav.base.clientInfo = this;
     nav.didFailProvisionalNavigation = WebViewThunks::didFailProvisional;
+    nav.didReceiveAuthenticationChallenge = WebViewThunks::didReceiveAuthenticationChallenge;
     nav.webProcessDidCrash = WebViewThunks::webProcessDidCrash;
     WKPageSetPageNavigationClient(page(), &nav.base);
 }
