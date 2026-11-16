@@ -36,7 +36,15 @@ Nothing is marked Implemented until it has been run and checked.
 | Tabs | `target=_blank` / `window.open` | Partial | Opens as a new tab next to the opener (`createNewPage`). Sized popup windows also open as tabs for now |
 | Tabs | Compact tab layout (tabs inside the toolbar) | Planned | Safari's alternative layout; currently only the separate tab bar exists |
 | Tabs | Tab Groups | Planned | M5 |
-| Search | Suggestions, Top Hit, start page | Planned | M4 |
+| Search | Smart Search dropdown: Top Hit, history and bookmark matches ranked by frecency | Partial | M4 code written in a cloud session; **not built or run yet**. Ranking and matching are unit tested (MinGW/Wine). Plain substring/word matching; non-ASCII matching is case-sensitive (SQLite `LIKE` folds ASCII only) |
+| Search | Inline autocomplete of host, then path after a `/` | Partial | Unit tested; UI not run yet. Suppressed after Backspace/Delete and when the caret isn't at the end. IME composition with completion not checked |
+| Search | Keyboard: ↑/↓, Enter, Esc (twice), Shift+Delete removes a history row | Partial | Written and covered by `tools/smoke-m4.ps1` (through automation commands, not real key presses); not run yet |
+| Search | Search-engine suggestions | Partial | **Opt-in, off by default.** Toggle from the start page's context menu until Settings exists (M7). HTTPS only, no cookies, 64 KB / 3 s caps, stale answers dropped, never for private contexts. Uses DuckDuckGo's `ac` endpoint; that endpoint's format isn't verified against the live service yet (the parser accepts both array and object forms) |
+| Search | Start page for new tabs: Favorites, Frequently Visited | Partial | Native, local data only. Folders inside Favorites aren't shown yet. Reading List section arrives with M5. Not run yet |
+| Library | History: recorded on main-frame commit, typed counts, titles, site icons | Partial | Restored-session pages aren't counted as new visits. Every commit counts, reloads included. Private windows (M6) won't record: the check is in place, but all windows are non-private today. Not run yet |
+| Library | History view (Ctrl+H): grouped by day, search, open, delete, clear | Partial | Native view in the content area. Safari uses ⌘Y; Ctrl+Y is Redo on Windows, so Ctrl+H. Clearing history also clears saved site icons. Not run yet |
+| Library | Bookmarks: folder tree, Favorites folder, Ctrl+D | Partial | Tree, ordering, moves are unit tested. Ctrl+D adds straight to Favorites with a banner; Safari's add sheet (choose folder/title) isn't built. No bookmarks editor or Favorites bar yet |
+| Library | Bookmark import/export (Netscape HTML) | Partial | Unit tested, including a foreign file shape, `javascript:` links dropped, nesting capped at 32 levels, 32 MB file cap. Context menu on the start page. Not run yet |
 | Library | Sidebar, Reading List, Reader mode, Tab Groups | Planned | M5 |
 | Privacy | Private windows (non-persistent data store) | Planned | Engine support exists (`WKWebsiteDataStoreCreateNonPersistentDataStore`), already wired in `EngineContext` |
 | Privacy | Content blockers, permissions, HTTPS upgrade, privacy report | Planned | M6 |

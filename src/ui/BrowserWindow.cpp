@@ -376,7 +376,10 @@ void BrowserWindow::wire(Tab& tab)
     };
     cb.backForwardChanged = [this] { InvalidateRect(m_hwnd, nullptr, FALSE); };
     cb.loadFailed = [this, id](const std::wstring& url, const std::wstring& desc) {
-        if (Tab* tab = findTab(id); tab && !desc.empty())
+        Tab* tab = findTab(id);
+        if (tab)
+            tab->typedPending = false; // never committed: don't mark a later navigation as typed
+        if (tab && !desc.empty())
             showBanner(*tab, L"Couldn’t open " + services::displayHost(url) + L": " + desc);
     };
     cb.webProcessCrashed = [this, id] {
@@ -580,6 +583,7 @@ void BrowserWindow::duplicateTab(int index)
     tab->title = src.title;
     tab->favicon = src.favicon;
     tab->faviconHost = src.faviconHost;
+    tab->startPage = src.startPage;
     tab->pendingState = src.view ? src.view->sessionState() : src.pendingState;
     attachTab(std::move(tab), index + 1, true);
 }

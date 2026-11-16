@@ -24,7 +24,7 @@ A Windows 10/11 x64 desktop browser built on the **real open-source WebKit Windo
 | 1 | Toolchain + WebKit build | **done** |
 | 2 | Shell skeleton | **done** (+ maximized caption-button fix) |
 | 3 | Tabs: favicons, titles, reorder, pinned, overview, session restore | **done** |
-| 4 | Smart Search, start page, history/bookmarks with real suggestions | **next, not started**: the user hasn't said go yet |
+| 4 | Smart Search, start page, history/bookmarks with real suggestions | **code written, not built yet** (cloud session). See §6 |
 | 5 | Sidebar, Reading List, Reader mode, Tab Groups | planned |
 | 6 | Privacy: private windows, content blocking, permissions, downloads, passwords/autofill | planned |
 | 7 | Settings, Web Inspector integration, keyboard/gesture parity, DPI + dark-mode polish | planned |
@@ -135,15 +135,41 @@ A Windows 10/11 x64 desktop browser built on the **real open-source WebKit Windo
   - Until then, every glass detail is marked "unverified".
   - Backdrop lead: `WKViewSetUsesOffscreenRendering`. Still to find out how to get its pixels (shared D3D surface vs. CPU readback) and what it costs.
 - **Private windows:** the engine support is already wired (`EngineContext(ephemeral=true)`), but there's no UI yet (M6).
-- **`Brand.h` `kVersion`** still says `0.2.0-m2`. Bump it at the next milestone.
+- **`Brand.h` `kVersion`** is `0.4.0-m4` (bumped with the M4 code).
 
-## 6. Next step: Milestone 4 (wait for the user's go-ahead)
-Planned scope, all in SQLite under `services/`:
-- **History service:** visits table (url, title, visit time, typed count, frecency), recorded from navigation callbacks and excluded in private windows. A History view with search and delete.
-- **Bookmarks service:** a folder tree, a Favorites bar folder, Ctrl+D to add, and HTML bookmark import/export.
-- **Smart Search dropdown** under the address field:
-  - Top Hit, history and bookmark matches (prefix plus word matching, ranked by frecency), and inline autocomplete of the top host.
-  - Search-engine suggestions only with an **opt-in** setting, since a network request on every keystroke counts as telemetry under the spec.
-  - Full keyboard navigation (↑/↓/Enter/Esc, Shift+Delete removes a history entry).
-- **Start page** for new tabs: Favorites grid, Frequently Visited, and (later) Reading List. Rendered natively or as a local page, never fetched remotely.
-- **Tests:** unit tests for frecency, matching and the bookmark tree; `tools/smoke-m4.ps1` with automation commands (type into the field, read the suggestions, pick one); screenshots; docs updates.
+## 6. Milestone 4: written, waiting for a Windows build
+All M4 code was written in a cloud session on 2026-11-16 and pushed to branch `claude/bold-bohr-0sgcne`. **It hasn't been built with MSVC or run.**
+
+What was verified there:
+- **Unit tests:** cross-compiled with MinGW and run under Wine; 49 cases pass. The exception is the M3 favicon scaling test, which fails only under Wine.
+- **UI and app code:** syntax-checked against stand-in WebKit headers.
+
+What exists:
+- **Services** (SQLite, `services/`):
+  - `History`: per-URL rows plus visit rows, frecency, clearing.
+  - `Bookmarks`: tree, Favorites/Bookmarks roots, Netscape HTML import/export.
+  - `Suggestions`: Top Hit, completion, ranking.
+  - `SearchSuggestions`: opt-in fetch and JSON parsing.
+  - `Settings`, `IconStore`, `Text`.
+- **UI** (`ui/`):
+  - `SuggestionPopup`: non-activating dropdown.
+  - `StartPage`: native.
+  - `HistoryView`: Ctrl+H.
+  - `BrowserWindow` wiring: typing, completion, keys, Ctrl+D, context menus, automation commands (`type`, `key`, `pick`, `dumpui`, `history*`, `bookmark`, `import/exportbookmarks`, `setting suggest`, `starttile`).
+- **Engine:** a `navigationCommitted` callback (`didCommitNavigation`) records visits.
+- **Tests:** `tests/HistoryTests.cpp`, `BookmarkTests.cpp`, `SuggestionTests.cpp`; `tools/smoke-m4.ps1`.
+
+To finish M4 on the PC:
+1. Pull the branch. Build from clean (the commands are in §2). Fix any compile errors MSVC/clang-cl reports; the likeliest spots are in `BrowserWindow.cpp`.
+2. Run `build\bin\meridian_tests.exe`, then `smoke-m2`, `smoke-m3` and `tools\smoke-m4.ps1`. Smoke-m4 saves `m4-smart-search.png`, `m4-start-page.png` and `m4-history.png`.
+3. Look at the screenshots and report the differences honestly. Things not checked yet:
+   - the dropdown's look (rounded corners, shadow, dark/light)
+   - real key presses rather than automation
+   - IME
+   - mouse hover and click in the dropdown and on tiles
+4. Update `FEATURE_STATUS.md` from "Partial / not run yet" to whatever is actually verified, then mark M4 done here and in `README.md`.
+
+Deliberate choices to confirm with the user:
+- History is on **Ctrl+H**, not Ctrl+Y (that's Redo on Windows).
+- **Ctrl+D** adds straight to Favorites, without Safari's sheet.
+- The search-suggestion opt-in lives in the start page's right-click menu until Settings (M7).

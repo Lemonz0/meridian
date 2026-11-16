@@ -101,9 +101,10 @@ Screenshots: `tools\capture-window.ps1 -ProcessName Meridian -Screen -Out x.png`
 ## Test tools
 | Tool | What it covers |
 |---|---|
-| `build\bin\meridian_tests.exe` | Unit tests: URL fixup, SQLite session store, favicon decoding |
+| `build\bin\meridian_tests.exe` | Unit tests: URL fixup, SQLite session store, favicon decoding, history/frecency, bookmarks tree + HTML import/export, suggestions ranking, search-suggestion JSON, settings, icon store |
 | `tools\smoke-m2.ps1` | Navigation, search, back/forward, certificate errors (temp profile) |
 | `tools\smoke-m3.ps1` | Tabs end to end, including quit and relaunch (temp profile, `--automation`) |
+| `tools\smoke-m4.ps1` | Smart Search (completion, keys, Shift+Delete), start page, History view, Ctrl+D, bookmark import/export, opt-in engine suggestions, persistence across restart. `-NoSearchSuggestions` skips the one step that sends a query to DuckDuckGo |
 | `tools\probe-caption.ps1` | Min/max/close hit-testing, windowed and maximized |
 | `tools\capture-window.ps1` | Screenshots. `-Screen` refuses to save unless the window is verifiably on top |
 
@@ -130,3 +131,9 @@ Command-line flags:
   - black thumbnails from tabs that hadn't painted yet
 
   **M3 verified** (gaps listed in FEATURE_STATUS).
+- 2026-11-16 (cloud session): **M4 code written, not yet built with MSVC or run.**
+  - New services: `History`, `Bookmarks`, `Suggestions`, `SearchSuggestions`, `Settings`, `IconStore`, `Text`.
+  - New UI: `SuggestionPopup`, `StartPage`, `HistoryView`, plus `BrowserWindow`/`App` wiring and a `navigationCommitted` engine callback.
+  - Unit tests: 49 cases. They were run by cross-compiling with MinGW-w64 (GCC 13) and running under Wine 9 against the SQLite amalgamation. All M4 tests pass. `decodeScalesToRequestedSize` (M3, passed on the PC) fails only under Wine, whose WIC lacks the scaler.
+  - The browser itself was syntax-checked with MinGW against stand-in WebKit headers, not compiled with MSVC/clang-cl. Expect possible small compile fixes on the PC.
+  - Bug found by the tests and fixed: typing `https://wiki` or `www.wiki` didn't match `https://www.wikipedia.org` history.

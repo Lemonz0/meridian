@@ -10,7 +10,8 @@ A Windows 10/11 (x64) web browser built on the open-source **WebKit WinCairo** p
 | 1. Toolchain + WebKit Windows-port build + MiniBrowser loads webkit.org | **done**: 38 min build, see `docs/screenshots/m1-*` |
 | 2. Shell skeleton: window, one WebKit view, address field, back/forward/reload, progress | **done**: `tools/smoke-m2.ps1` 13/13, see `docs/screenshots/m2-*` |
 | 3. Tabs: favicons, titles, reorder, pinned, overview, session restore | **done**: `tools/smoke-m3.ps1` 23/23, see `docs/screenshots/m3-*` |
-| 4–8 | not started |
+| 4. Smart Search, start page, history/bookmarks with real suggestions | **code written, not yet built or run** (cloud session, 2026-11-16). Services unit tests pass under a MinGW/Wine cross-build. Next: MSVC build, `tools/smoke-m4.ps1`, screenshots |
+| 5–8 | not started |
 
 Upstream's Windows port now uses **Skia** (`USE_SKIA=ON`); it was formerly "WinCairo". It's the same port, with only the graphics backend changed.
 
@@ -51,6 +52,11 @@ Every exact command and version is in [BUILD_NOTES.md](BUILD_NOTES.md). Short ve
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+PgDn / Ctrl+PgUp, Ctrl+Shift+] / [ |
 | Go to tab 1–8 / last tab | Ctrl+1…8 / Ctrl+9 |
 | Tab overview | Ctrl+Shift+\ (arrows to move, Enter to open, Delete to close, Esc to exit) |
+| Smart Search dropdown | ↑/↓ to choose, Enter to open, Esc to close the menu (again to stop editing), Shift+Delete removes a history row |
+| History | Ctrl+H (↑/↓, Enter to open, Ctrl+Enter in a new tab, Delete to remove, Esc to close) |
+| Add page to Favorites | Ctrl+D |
+
+History is Ctrl+H (the Windows browser convention) rather than Safari's ⌘Y, because Ctrl+Y is Redo in text fields on Windows.
 
 Mouse:
 - Click a tab to select it.
@@ -58,3 +64,4 @@ Mouse:
 - Middle-click a tab to close it.
 - Right-click a tab for Pin, Duplicate, Move to New Window, and Close Others/Right.
 - Ctrl+click or middle-click a link to open it in a background tab. Ctrl+Shift+click opens it in front.
+- New tabs show the start page (Favorites, Frequently Visited). Right-click it for Import/Export Bookmarks and the opt-in search-engine suggestions setting.
