@@ -596,7 +596,31 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
         break;
 
     case WM_NCHITTEST: {
-        POINT pt { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT screenPt { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+
+        // Caption buttons first. DwmDefWindowProc (above) handles them while
+        // windowed, but stops recognizing them when maximized (the window then
+        // overhangs the monitor by the frame width), so clicks fell through to
+        // HTCAPTION. Hit-test the DWM-reported button rect ourselves; returning
+        // HTMINBUTTON/HTMAXBUTTON/HTCLOSE lets DefWindowProc run the standard
+        // minimize / maximize-restore / close behavior.
+        RECT window, buttons;
+        if (GetWindowRect(m_hwnd, &window)
+            && SUCCEEDED(DwmGetWindowAttribute(m_hwnd, DWMWA_CAPTION_BUTTON_BOUNDS, &buttons, sizeof(buttons)))
+            && buttons.right > buttons.left) {
+            OffsetRect(&buttons, window.left, window.top);
+            RECT hit = buttons;
+            if (IsZoomed(m_hwnd))
+                hit.right = window.right; // let the very corner pixel hit Close (Fitts)
+            if (PtInRect(&hit, screenPt)) {
+                LONG third = std::max<LONG>((buttons.right - buttons.left) / 3, 1);
+                LONG index = std::min<LONG>(2, (screenPt.x - buttons.left) / third);
+                static constexpr LRESULT codes[] = { HTMINBUTTON, HTMAXBUTTON, HTCLOSE };
+                return codes[index];
+            }
+        }
+
+        POINT pt = screenPt;
         ScreenToClient(m_hwnd, &pt);
         int frame = GetSystemMetricsForDpi(SM_CYFRAME, m_dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, m_dpi);
         if (!IsZoomed(m_hwnd) && pt.y < frame)
