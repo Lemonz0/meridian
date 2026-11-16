@@ -43,6 +43,16 @@ TEST(suggestEmptyInput)
     CHECK(f.suggest(L"   ").items.empty());
 }
 
+TEST(suggestBarePrefixMatchesNothing)
+{
+    Fixture f;
+    f.visit(L"https://webkit.org/", L"WebKit");
+    auto l = f.suggest(L"www.");
+    CHECK(l.completion.empty());
+    for (auto& s : l.items)
+        CHECK(s.kind != SuggestionKind::History && s.kind != SuggestionKind::TopHit);
+}
+
 TEST(suggestNoHistoryStillOffersSearch)
 {
     Fixture f;

@@ -66,11 +66,22 @@ SuggestionList buildSuggestions(History& history, Bookmarks& bookmarks, const st
     // A trailing space means the word is finished: nothing to complete.
     bool singleWord = words.size() == 1 && !iswspace(rawInput.back());
     std::wstring typed = singleWord ? strippedURL(input) : std::wstring();
+    // Match "https://wiki" and "www.wiki" against stored URLs the way the
+    // user means them: without the scheme or www. they typed.
+    for (auto& w : words)
+        w = strippedURL(w);
+    words.erase(std::remove_if(words.begin(), words.end(), [](auto& w) { return w.empty(); }), words.end());
 
     // Gather: history first, then bookmarks merged in by URL.
     std::vector<Candidate> candidates;
     std::map<std::wstring, size_t> byURL;
-    for (auto& e : history.find(words, History::Order::MostVisited, 200)) {
+    std::vector<HistoryEntry> historyMatches;
+    std::vector<Bookmark> bookmarkMatches;
+    if (!words.empty()) { // no words would match everything
+        historyMatches = history.find(words, History::Order::MostVisited, 200);
+        bookmarkMatches = bookmarks.find(words, 50);
+    }
+    for (auto& e : historyMatches) {
         Candidate c;
         c.url = e.url;
         c.title = e.title;
@@ -80,7 +91,7 @@ SuggestionList buildSuggestions(History& history, Bookmarks& bookmarks, const st
         byURL[c.url] = candidates.size();
         candidates.push_back(std::move(c));
     }
-    for (auto& b : bookmarks.find(words, 50)) {
+    for (auto& b : bookmarkMatches) {
         auto it = byURL.find(b.url);
         if (it == byURL.end()) {
             Candidate c;
