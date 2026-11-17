@@ -104,6 +104,8 @@ Screenshots: `tools\capture-window.ps1 -ProcessName Meridian -Screen -Out x.png`
 | `build\bin\meridian_tests.exe` | Unit tests: URL fixup, SQLite session store, favicon decoding, history/frecency, bookmarks tree + HTML import/export, suggestions ranking, search-suggestion JSON, settings, icon store |
 | `tools\smoke-m2.ps1` | Navigation, search, back/forward, certificate errors (temp profile) |
 | `tools\smoke-m3.ps1` | Tabs end to end, including quit and relaunch (temp profile, `--automation`) |
+| `tools\smoke-m5.ps1` | Reader on an article (Wikipedia), Reading List, sidebar, Tab Groups (create, switch, pinned tabs, rename, delete), restart with a group shown |
+| `node tools\reader-check.cjs` | Reader script against `tests\reader\*.html` under jsdom (dev only; needs Node and `npm install jsdom@24`, see the file header) |
 | `tools\smoke-m4.ps1` | Smart Search (completion, keys, Shift+Delete), start page, History view, Ctrl+D, bookmark import/export, opt-in engine suggestions, persistence across restart. `-NoSearchSuggestions` skips the one step that sends a query to DuckDuckGo |
 | `tools\probe-caption.ps1` | Min/max/close hit-testing, windowed and maximized |
 | `tools\capture-window.ps1` | Screenshots. `-Screen` refuses to save unless the window is verifiably on top |
@@ -137,3 +139,13 @@ Command-line flags:
   - Unit tests: 49 cases. They were run by cross-compiling with MinGW-w64 (GCC 13) and running under Wine 9 against the SQLite amalgamation. All M4 tests pass. `decodeScalesToRequestedSize` (M3, passed on the PC) fails only under Wine, whose WIC lacks the scaler.
   - The browser itself was syntax-checked with MinGW against stand-in WebKit headers, not compiled with MSVC/clang-cl. Expect possible small compile fixes on the PC.
   - Bug found by the tests and fixed: typing `https://wiki` or `www.wiki` didn't match `https://www.wikipedia.org` history.
+- 2026-11-17 (cloud session): **M5 code written, not yet built with MSVC or run.**
+  - New services: `ReadingList`, `TabGroups`, `Reader` (style and result parsing). `SessionStore` gained a window's group and its set-aside tabs, with a migration for M3/M4 profiles.
+  - New engine pieces: `reader.js` (original article detection plus the overlay), `ReaderScript`, `WebView::evaluateScript` and `loadFinished`.
+  - New UI: `Sidebar` and `BrowserWindowLibrary.cpp`; the start page gained a Reading List section.
+  - Build: `cmake/EmbedText.cmake` embeds `reader.js` into the binary as a byte array at build time.
+  - Unit tests: 62 cases under MinGW/Wine. All M5 tests pass; the Wine-only favicon failure from M4 is unchanged.
+  - Reader checks: 48 under jsdom. They found and fixed:
+    - showing Reader twice left the page unscrollable afterwards
+    - encyclopedia `[edit]` links and citation markers appeared in the article
+  - Live pages couldn't be fetched from the cloud session (its network policy blocks them), so Reader on real sites is unverified until `smoke-m5` runs on the PC.

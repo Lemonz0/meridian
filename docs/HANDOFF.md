@@ -25,7 +25,7 @@ A Windows 10/11 x64 desktop browser built on the **real open-source WebKit Windo
 | 2 | Shell skeleton | **done** (+ maximized caption-button fix) |
 | 3 | Tabs: favicons, titles, reorder, pinned, overview, session restore | **done** |
 | 4 | Smart Search, start page, history/bookmarks with real suggestions | **code written, not built yet** (cloud session). See §6 |
-| 5 | Sidebar, Reading List, Reader mode, Tab Groups | planned |
+| 5 | Sidebar, Reading List, Reader mode, Tab Groups | **code written, not built yet** (cloud session). See §7 |
 | 6 | Privacy: private windows, content blocking, permissions, downloads, passwords/autofill | planned |
 | 7 | Settings, Web Inspector integration, keyboard/gesture parity, DPI + dark-mode polish | planned |
 | 8 | Installer, crash handling, performance pass, automated test suite | planned |
@@ -173,3 +173,49 @@ Deliberate choices to confirm with the user:
 - History is on **Ctrl+H**, not Ctrl+Y (that's Redo on Windows).
 - **Ctrl+D** adds straight to Favorites, without Safari's sheet.
 - The search-suggestion opt-in lives in the start page's right-click menu until Settings (M7).
+
+## 7. Milestone 5: written, waiting for a Windows build
+Written in a cloud session on 2026-11-17, on the same branch, after M4. **It hasn't been built with MSVC or run.**
+
+What was verified there:
+- **Unit tests:** cross-compiled with MinGW and run under Wine; 62 cases pass. The exception is the Wine-only favicon case.
+- **Reader script:** 48 checks pass under jsdom (`node tools/reader-check.cjs`).
+- **UI and app code:** syntax-checked against stand-in WebKit headers. `WebView.cpp` was only reviewed by eye.
+
+What exists:
+- **Services:**
+  - `ReadingList`.
+  - `TabGroups`: groups plus each group's saved tabs.
+  - `Reader`: style settings, result parsing, JS string quoting.
+  - `SessionStore`: now stores each window's `groupId` and its set-aside (`stash`) tabs; old profiles get the new columns added.
+- **Engine:**
+  - `reader.js`, embedded by `cmake/EmbedText.cmake` into `build/generated/ReaderScriptData.h`.
+  - `ReaderScript`.
+  - `WebView::evaluateScript`, guarded by a per-view serial, and `loadFinished`.
+- **UI:**
+  - `Sidebar`.
+  - `BrowserWindowLibrary.cpp`: sidebar, groups, Reading List, Reader.
+  - Toolbar: sidebar button and group picker. Address field: Reader button.
+  - Start page: Reading List section.
+- **Tests:**
+  - `tests/LibraryTests.cpp`, `ReaderTests.cpp`.
+  - `tests/reader/*.html` with `tools/reader-check.cjs`.
+  - `tools/smoke-m5.ps1`.
+
+To finish M5 on the PC (after M4's steps in §6):
+1. Build from clean and fix any compile errors. The likeliest spots are `BrowserWindowLibrary.cpp`, `BrowserWindow.cpp` and `WebView.cpp`. Check that `build/generated/ReaderScriptData.h` gets generated.
+2. Run the unit tests, then `smoke-m2` to `smoke-m5`. Smoke-m5 saves:
+   - `m5-reader.png`
+   - `m5-reader-sepia.png`
+   - `m5-sidebar.png`
+   - `m5-groups.png`
+3. Look at the screenshots. Check by hand what automation doesn't cover:
+   - **Real input:** sidebar clicks, inline rename typing, the group picker menu, the Reader button, F9 and Esc.
+   - **Reader on live sites:** news sites, blogs, documentation.
+   - **Page restrictions:** whether a strict Content-Security-Policy blocks Reader's styles.
+4. Update `FEATURE_STATUS.md` from "Partial / not run yet" to whatever is verified.
+
+Deliberate choices to confirm with the user:
+- **Reader is F9**, not Ctrl+Shift+R.
+- **Reading List doesn't save pages for offline reading**; the WebKit C API offers no page archive.
+- **Sidebar state isn't remembered** across restarts.

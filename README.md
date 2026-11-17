@@ -11,7 +11,8 @@ A Windows 10/11 (x64) web browser built on the open-source **WebKit WinCairo** p
 | 2. Shell skeleton: window, one WebKit view, address field, back/forward/reload, progress | **done**: `tools/smoke-m2.ps1` 13/13, see `docs/screenshots/m2-*` |
 | 3. Tabs: favicons, titles, reorder, pinned, overview, session restore | **done**: `tools/smoke-m3.ps1` 23/23, see `docs/screenshots/m3-*` |
 | 4. Smart Search, start page, history/bookmarks with real suggestions | **code written, not yet built or run** (cloud session, 2026-11-16). Services unit tests pass under a MinGW/Wine cross-build. Next: MSVC build, `tools/smoke-m4.ps1`, screenshots |
-| 5–8 | not started |
+| 5. Sidebar, Reading List, Reader, Tab Groups | **code written, not yet built or run** (cloud session, 2026-11-17). Services unit tests pass under MinGW/Wine; Reader script passes 48 checks under jsdom. Next: MSVC build, `tools/smoke-m5.ps1`, screenshots |
+| 6–8 | not started |
 
 Upstream's Windows port now uses **Skia** (`USE_SKIA=ON`); it was formerly "WinCairo". It's the same port, with only the graphics backend changed.
 
@@ -55,8 +56,11 @@ Every exact command and version is in [BUILD_NOTES.md](BUILD_NOTES.md). Short ve
 | Smart Search dropdown | ↑/↓ to choose, Enter to open, Esc to close the menu (again to stop editing), Shift+Delete removes a history row |
 | History | Ctrl+H (↑/↓, Enter to open, Ctrl+Enter in a new tab, Delete to remove, Esc to close) |
 | Add page to Favorites | Ctrl+D |
+| Add page to Reading List | Ctrl+Shift+D |
+| Show / hide sidebar | Ctrl+Shift+L |
+| Reader | F9 to show or hide, Esc to leave, Ctrl+= / Ctrl+- / Ctrl+0 for text size while it's shown |
 
-History is Ctrl+H (the Windows browser convention) rather than Safari's ⌘Y, because Ctrl+Y is Redo in text fields on Windows.
+History is Ctrl+H (the Windows browser convention) rather than Safari's ⌘Y, because Ctrl+Y is Redo in text fields on Windows. For the same reason Reader is F9 (the Windows reading-view key) rather than Safari's ⇧⌘R, since Ctrl+Shift+R means "reload without cache" in Windows browsers.
 
 Mouse:
 - Click a tab to select it.
@@ -64,4 +68,6 @@ Mouse:
 - Middle-click a tab to close it.
 - Right-click a tab for Pin, Duplicate, Move to New Window, and Close Others/Right.
 - Ctrl+click or middle-click a link to open it in a background tab. Ctrl+Shift+click opens it in front.
-- New tabs show the start page (Favorites, Frequently Visited). Right-click it for Import/Export Bookmarks and the opt-in search-engine suggestions setting.
+- New tabs show the start page (Favorites, Frequently Visited, unread Reading List items). Right-click it for Import/Export Bookmarks and the opt-in search-engine suggestions setting.
+- The sidebar button (left of Back) opens the sidebar. The chevron next to it picks a tab group. Right-click sidebar rows to rename, delete, add folders or mark items read.
+- When a page has an article, a Reader button appears at the left of the address field. Right-click it for theme, font and size.
