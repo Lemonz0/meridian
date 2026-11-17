@@ -15,7 +15,7 @@
     var SEP = '\u001f';
     var MIN_ARTICLE_CHARS = 500;
     var POSITIVE = /article|body|content|entry|main|page|post|text|blog|story|prose/i;
-    var NEGATIVE = /comment|meta|footer|footnote|sidebar|sponsor|\bads?\b|\bads?-|advert|promo|related|share|social|nav|menu|masthead|header|widget|banner|cookie|consent|subscribe|newsletter|popup|modal|breadcrumb|pagination|toolbar|disqus|outbrain|taboola|recommend/i;
+    var NEGATIVE = /comment|meta|footer|footnote|sidebar|sponsor|\bads?\b|\bads?-|advert|promo|related|share|social|nav|menu|masthead|header|widget|banner|cookie|consent|subscribe|newsletter|popup|modal|breadcrumb|pagination|toolbar|disqus|outbrain|taboola|recommend|editsection|noprint|navbox|hatnote|catlinks|jump-link|(?:^|\s)reference(?:\s|$)/i;
     var DROP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, IFRAME: 1, FRAME: 1, OBJECT: 1, EMBED: 1, FORM: 1, INPUT: 1,
         BUTTON: 1, SELECT: 1, TEXTAREA: 1, NAV: 1, ASIDE: 1, FOOTER: 1, SVG: 1, CANVAS: 1, VIDEO: 1, AUDIO: 1,
         TEMPLATE: 1, DIALOG: 1, LINK: 1, META: 1, MAP: 1 };

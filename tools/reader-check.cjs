@@ -101,6 +101,21 @@ function page(fixture, url = 'https://journal.example/posts/paint') {
     check('div/br article: related posts dropped', !content.includes('Related:'));
 }
 {
+    // Encyclopedia-style layout: nested content containers, infobox, edit links, citations.
+    const p = page('wiki.html', 'https://encyclopedia.example/wiki/Layout_engine');
+    const r = p.run('check');
+    check('wiki: available', r.available, r.raw);
+    check('wiki: title from <h1>', r.title === 'Layout engine', r.title);
+    p.run('show');
+    const content = p.doc.querySelector('[data-meridian-reader]').shadowRoot.textContent;
+    check('wiki: all paragraphs kept', ['turns markup', 'share a pipeline', 'Early engines', 'Forks are common', 'conformance suites'].every(t => content.includes(t)));
+    check('wiki: section headings kept', content.includes('History') && content.includes('Design'));
+    check('wiki: [edit] links dropped', !/\bedit\b/.test(content), content.match(/.{20}\bedit\b.{20}/));
+    check('wiki: citation markers dropped', !content.includes('[1]'));
+    check('wiki: navigation, toc, navbox, footer dropped', !content.includes('Current events') && !content.includes('Jump to content') && !content.includes('Epsilon') && !content.includes('last edited'));
+    check('wiki: hatnote and site subtitle dropped', !content.includes('disambiguation') && !content.includes('From the Encyclopedia'));
+}
+{
     const r = page('article.html', 'about:blank').run('check');
     check('about: pages are never available', !r.available);
 }
