@@ -40,6 +40,8 @@ namespace tokens {
 constexpr float kSuggestionRowHeight = 34;
 constexpr float kSuggestionHeaderHeight = 24;
 constexpr float kSuggestionRadius = 12;
+constexpr float kSidebarWidth = 264;
+constexpr float kGroupLabelMaxWidth = 160;
 }
 
 struct Palette {
@@ -67,6 +69,11 @@ struct Painter {
     void tabGrid(D2D1_POINT_2F center, const D2D1_COLOR_F&);
     void globe(D2D1_POINT_2F center, float radius, const D2D1_COLOR_F&); // fallback favicon
     void magnifier(D2D1_POINT_2F center, const D2D1_COLOR_F&);           // search rows
+    void sidebarIcon(D2D1_POINT_2F center, const D2D1_COLOR_F&);         // toolbar: show/hide sidebar
+    void chevronDown(D2D1_POINT_2F center, float half, const D2D1_COLOR_F&);
+    void readerIcon(D2D1_POINT_2F center, const D2D1_COLOR_F&);          // address field: Reader
+    void folder(D2D1_POINT_2F center, const D2D1_COLOR_F&);
+    void tabsIcon(D2D1_POINT_2F center, const D2D1_COLOR_F&);            // sidebar: a tab group
     void clock(D2D1_POINT_2F center, float radius, const D2D1_COLOR_F&); // history rows without an icon
     // Site icon if there is one, else a rounded tile with the host's first letter.
     void siteTile(D2D1_RECT_F box, ID2D1Bitmap* icon, const std::wstring& host, IDWriteTextFormat* letterFormat,

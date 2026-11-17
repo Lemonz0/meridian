@@ -4,16 +4,19 @@
 // milestone; see docs/GLASS_NOTES.md.
 #include "Chrome.h"
 #include "HistoryView.h"
+#include "Sidebar.h"
 #include "StartPage.h"
 #include "SuggestionPopup.h"
 #include "Tab.h"
 #include "TabOverview.h"
 #include "TabStrip.h"
+#include "services/Reader.h"
 #include "services/SessionStore.h"
 #include "services/Suggestions.h"
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -39,8 +42,15 @@ public:
     int activeIndex() const { return m_active; }
     const Tab& tab(int i) const { return *m_tabs[i]; }
 
+    // M5
+    int64_t groupId() const { return m_groupId; }  // 0: the window's own ungrouped tabs
+    void persistGroup();                            // write the shown group's tabs to the database
+    void switchToGroup(int64_t groupId);
+    void libraryChanged();                          // refresh sidebar / start page from the database
+
 private:
-    enum class Hit { None, Back, Forward, Reload, Address, NewTab, Overview, Caption, Strip, Content };
+    enum class Hit { None, Sidebar, GroupMenu, Back, Forward, Reload, Reader, Address, NewTab, Overview, Caption, Strip,
+        SidebarArea, Content };
 
     BrowserWindow(app::App&);
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
@@ -104,6 +114,33 @@ private:
     void removeSelectedSuggestionFromHistory();
     bool handleAddressKey(WPARAM vk, bool shift);     // true if consumed
 
+    // Sidebar (Ctrl+Shift+L)
+    void setSidebar(bool open);
+    void refreshSidebar();
+    void sidebarClick(const Sidebar::Hit&, bool ctrl);
+    void showSidebarMenu(const Sidebar::Hit&, POINT screen);
+    void beginRename(Sidebar::Kind, int64_t id);
+    void endRename(bool commit);
+    static LRESULT CALLBACK renameProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+    // Tab Groups
+    std::unique_ptr<Tab> makeTab(const services::SessionTab&);
+    int ungroupedCount() const;
+    int64_t newGroup(bool withCurrentTabs, const std::wstring& name = {});
+    void deleteGroup(int64_t id, bool confirm);
+    void showGroupMenu(POINT screen);
+    void updateGroupLabel();
+
+    // Reading List (Ctrl+Shift+D)
+    void addToReadingList();
+    void openReadingItem(int64_t id, bool newTab);
+
+    // Reader (F9)
+    void checkReader(uint64_t tabId);
+    void setReader(bool on);
+    void applyReaderStyle(const services::ReaderStyle&);
+    void showReaderMenu(POINT screen);
+
     // Overview
     void setOverview(bool open);
     void moveOverviewFocus(int dx, int dy);
@@ -164,6 +201,20 @@ private:
     int m_historySelected { -1 };
 
     std::map<std::wstring, ComPtr<ID2D1Bitmap>> m_siteIcons; // per render target
+
+    bool m_sidebarOpen { false };
+    Sidebar m_sidebar;
+    Sidebar::Hit m_sidebarHover;
+    std::set<int64_t> m_expandedFolders;     // bookmark folders open in the sidebar (roots start open)
+    HWND m_renameEdit { nullptr };
+    Sidebar::Kind m_renameKind { Sidebar::Kind::Group };
+    int64_t m_renameId { -1 };               // -1: not renaming
+
+    int64_t m_groupId { 0 };
+    std::vector<std::unique_ptr<Tab>> m_stash; // ungrouped tabs while a group is shown (no web views)
+    int m_stashSelected { 0 };
+    std::wstring m_groupLabel;               // toolbar: name of the shown group
+    float m_groupLabelWidth { 0 };
 
     TabOverview m_overview;
     bool m_overviewOpen { false };

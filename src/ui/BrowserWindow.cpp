@@ -1,5 +1,7 @@
 #include "BrowserWindow.h"
 
+#include "WindowText.h"
+
 #include "app/App.h"
 #include "config/Brand.h"
 #include "platform/Log.h"
@@ -40,23 +42,6 @@ std::wstring hostOf(const std::wstring& url)
 {
     auto h = services::displayHost(url);
     return h == url ? std::wstring() : h;
-}
-
-std::wstring trimmed(const std::wstring& s)
-{
-    size_t b = 0, e = s.size();
-    while (b < e && iswspace(s[b])) ++b;
-    while (e > b && iswspace(s[e - 1])) --e;
-    return s.substr(b, e - b);
-}
-
-std::wstring windowText(HWND h)
-{
-    int len = GetWindowTextLengthW(h);
-    std::wstring text(size_t(len), L'\0');
-    if (len)
-        GetWindowTextW(h, text.data(), len + 1);
-    return text;
 }
 
 // What the address field shows while a suggestion is selected.
@@ -143,6 +128,7 @@ bool writeFileBytes(const std::wstring& path, const std::string& data)
 
 BrowserWindow::BrowserWindow(app::App& app)
     : m_app(app)
+    , m_expandedFolders { services::Bookmarks::kFavoritesId, services::Bookmarks::kBookmarksId }
 {
 }
 
@@ -188,20 +174,37 @@ BrowserWindow* BrowserWindow::create(app::App& app, const services::SessionWindo
     }
 
     if (restore) {
-        for (auto& st : restore->tabs) {
-            auto tab = std::make_unique<Tab>();
-            tab->id = app.nextTabId();
-            tab->url = st.url;
-            tab->title = st.title;
-            tab->pinned = st.pinned;
-            tab->pendingState = st.state;
-            tab->startPage = st.url.empty() || st.url == L"about:blank";
-            self->m_tabs.push_back(std::move(tab));
+        for (auto& st : restore->tabs)
+            self->m_tabs.push_back(self->makeTab(st));
+        // The group this window showed. If it was deleted meanwhile, its tabs
+        // become ungrouped, followed by the ones that were set aside.
+        bool groupExists = false;
+        try {
+            groupExists = restore->groupId && app.tabGroups() && app.tabGroups()->get(restore->groupId)
+                && !app.windowShowingGroup(restore->groupId, self);
+        } catch (const std::exception&) {
         }
+        if (groupExists) {
+            self->m_groupId = restore->groupId;
+            for (auto& st : restore->stash)
+                self->m_stash.push_back(self->makeTab(st));
+            self->m_stashSelected = restore->stashSelected;
+        } else
+            for (auto& st : restore->stash)
+                self->m_tabs.push_back(self->makeTab(st));
         // Pinned tabs always lead.
         std::stable_partition(self->m_tabs.begin(), self->m_tabs.end(), [](auto& t) { return t->pinned; });
         if (!self->m_tabs.empty())
             self->activate(std::clamp(restore->selected, 0, int(self->m_tabs.size()) - 1));
+        else if (self->m_groupId) {
+            // Only set-aside tabs survived (an empty group): show them.
+            self->m_groupId = 0;
+            self->m_tabs = std::move(self->m_stash);
+            self->m_stash.clear();
+            if (!self->m_tabs.empty())
+                self->activate(std::clamp(restore->stashSelected, 0, int(self->m_tabs.size()) - 1));
+        }
+        self->updateGroupLabel();
     } else if (addDefaultTab)
         self->openTab(brand::kDefaultHomeURL, true);
 
@@ -252,6 +255,10 @@ void BrowserWindow::onCreate()
     callbacks.activate = [this](int index) { activateSuggestion(index); };
     callbacks.icon = [this](const std::wstring& host) -> const services::Bitmap& { return m_app.siteIcon(host); };
     m_popup.create(m_hwnd, std::move(callbacks));
+
+    m_renameEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL | ES_LEFT | WS_BORDER, 0, 0, 0, 0, m_hwnd,
+        nullptr, GetModuleHandleW(nullptr), nullptr);
+    SetWindowSubclass(m_renameEdit, renameProc, 1, reinterpret_cast<DWORD_PTR>(this));
     updateTheme();
 }
 
@@ -390,7 +397,12 @@ void BrowserWindow::wire(Tab& tab)
     };
     cb.navigationCommitted = [this, id](const std::wstring& u) {
         Tab* tab = findTab(id);
-        if (!tab || !services::isRecordableURL(u))
+        if (!tab)
+            return;
+        // A new document: the Reader overlay (if any) went with the old one.
+        tab->readerAvailable = tab->readerActive = false;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        if (!services::isRecordableURL(u))
             return; // about:blank and friends don't consume the typed flag
         bool typed = tab->typedPending;
         tab->typedPending = false;
@@ -400,6 +412,7 @@ void BrowserWindow::wire(Tab& tab)
         }
         m_app.recordVisit(context(), u, typed);
     };
+    cb.loadFinished = [this, id] { checkReader(id); };
     cb.faviconURLChanged = [this, id](const std::wstring& iconURL) {
         Tab* tab = findTab(id);
         if (!tab)
@@ -642,6 +655,8 @@ void BrowserWindow::showTabMenu(int index, POINT screen)
 
 void BrowserWindow::tabsChanged()
 {
+    if (m_sidebarOpen)
+        refreshSidebar(); // the "N Tabs" count
     layout();
     InvalidateRect(m_hwnd, nullptr, FALSE);
     m_app.sessionChanged();
@@ -660,6 +675,10 @@ services::SessionWindow BrowserWindow::sessionSnapshot() const
     w.selected = std::max(0, m_active);
     for (auto& t : m_tabs)
         w.tabs.push_back({ t->url, t->title, t->pinned, t->view ? t->view->sessionState() : t->pendingState });
+    w.groupId = m_groupId;
+    for (auto& t : m_stash)
+        w.stash.push_back({ t->url, t->title, false, t->pendingState });
+    w.stashSelected = m_stashSelected;
     return w;
 }
 
@@ -747,10 +766,67 @@ void BrowserWindow::automate(const std::wstring& command)
     else if (verb == L"importbookmarks" && !arg.empty()) importBookmarks(arg);
     else if (verb == L"exportbookmarks" && !arg.empty()) exportBookmarks(arg);
     else if (verb == L"setting" && arg.rfind(L"suggest ", 0) == 0) m_app.setSearchSuggestionsEnabled(arg.substr(8) == L"1");
+    // M5: sidebar, groups, reading list, reader.
+    else if (verb == L"sidebar") setSidebar(arg == L"1");
+    else if (verb == L"sidebarpane") {
+        m_sidebar.setPane(arg == L"r" ? Sidebar::Pane::ReadingList : Sidebar::Pane::Bookmarks);
+        if (m_sidebarOpen)
+            refreshSidebar();
+        else
+            setSidebar(true);
+    }
+    else if (verb == L"newgroup") newGroup(false, arg);
+    else if (verb == L"newgroupwithtabs") newGroup(true, arg);
+    else if (verb == L"group") switchToGroup(_wtoi64(arg.c_str()));
+    else if (verb == L"renamegroup" && m_app.tabGroups()) {
+        auto sp = arg.find(L' ');
+        if (sp != std::wstring::npos) {
+            try {
+                m_app.tabGroups()->rename(_wtoi64(arg.substr(0, sp).c_str()), arg.substr(sp + 1));
+            } catch (const std::exception&) {
+            }
+            m_app.libraryChanged();
+        }
+    }
+    else if (verb == L"deletegroup") deleteGroup(_wtoi64(arg.c_str()), false);
+    else if (verb == L"readinglist") addToReadingList();
+    else if (verb == L"readingopen") openReadingItem(_wtoi64(arg.c_str()), false);
+    else if ((verb == L"readingread" || verb == L"readingdelete") && m_app.readingList()) {
+        try {
+            if (verb == L"readingdelete")
+                m_app.readingList()->remove(_wtoi64(arg.c_str()));
+            else {
+                auto sp = arg.find(L' ');
+                m_app.readingList()->setRead(_wtoi64(arg.c_str()), sp != std::wstring::npos && arg.substr(sp + 1) == L"1",
+                    services::unixNow());
+            }
+        } catch (const std::exception&) {
+        }
+        m_app.libraryChanged();
+    }
+    else if (verb == L"reader") setReader(arg == L"1");
+    else if (verb == L"readerstyle") {
+        // "readerstyle <auto|light|sepia|dark> <size%> <serif 0|1>"
+        services::ReaderStyle style;
+        wchar_t theme[16] {};
+        int size = 100, serif = 0;
+        swscanf_s(arg.c_str(), L"%15ls %d %d", theme, unsigned(ARRAYSIZE(theme)), &size, &serif);
+        std::wstring t = theme;
+        style.theme = t == L"light" ? services::ReaderTheme::Light : t == L"sepia" ? services::ReaderTheme::Sepia
+            : t == L"dark" ? services::ReaderTheme::Dark : services::ReaderTheme::Automatic;
+        style.sizePercent = std::clamp(size, services::ReaderStyle::kMinSize, services::ReaderStyle::kMaxSize);
+        style.serif = serif != 0;
+        applyReaderStyle(style);
+    }
     else if (verb == L"starttile" && showingStartPage()) {
-        // "starttile f 0" (favorites) / "starttile v 0" (frequently visited)
-        StartPage::Hit h { arg.rfind(L"v", 0) == 0 ? StartPage::Section::Frequent : StartPage::Section::Favorites,
-            arg.size() > 2 ? _wtoi(arg.c_str() + 2) : 0 };
+        // "starttile f 0" (favorites) / "starttile v 0" (frequently visited) / "starttile r 0" (reading list)
+        StartPage::Section section = arg.rfind(L"v", 0) == 0 ? StartPage::Section::Frequent
+            : arg.rfind(L"r", 0) == 0 ? StartPage::Section::Reading : StartPage::Section::Favorites;
+        StartPage::Hit h { section, arg.size() > 2 ? _wtoi(arg.c_str() + 2) : 0 };
+        if (auto* item = m_startPage.item(h); item && item->readingId) {
+            openReadingItem(item->readingId, false);
+            return;
+        }
         if (auto* item = m_startPage.item(h)) {
             std::wstring url = item->url;
             navigate(url, false);
@@ -776,11 +852,11 @@ void BrowserWindow::dumpUi(const std::wstring& path)
             + L" bookmarked=" + std::to_wstring(it.bookmarked) + L" url=" + it.url + L" title=" + it.title);
     }
     line(out, L"startpage visible=" + std::to_wstring(showingStartPage()));
-    for (auto section : { StartPage::Section::Favorites, StartPage::Section::Frequent }) {
+    for (auto section : { StartPage::Section::Favorites, StartPage::Section::Frequent, StartPage::Section::Reading }) {
         auto& items = m_startPage.items(section);
+        const wchar_t* prefix = section == StartPage::Section::Favorites ? L"fav " : section == StartPage::Section::Frequent ? L"freq " : L"startreading ";
         for (size_t i = 0; i < items.size(); ++i)
-            line(out, std::wstring(section == StartPage::Section::Favorites ? L"fav " : L"freq ") + std::to_wstring(i)
-                + L" url=" + items[i].url + L" title=" + items[i].title);
+            line(out, prefix + std::to_wstring(i) + L" url=" + items[i].url + L" title=" + items[i].title);
     }
     line(out, L"historyview open=" + std::to_wstring(m_historyOpen) + L" count=" + std::to_wstring(m_historyView.count())
         + L" selected=" + std::to_wstring(m_historySelected));
@@ -788,6 +864,35 @@ void BrowserWindow::dumpUi(const std::wstring& path)
         auto* e = m_historyView.entry(i);
         line(out, L"hist " + std::to_wstring(i) + L" visits=" + std::to_wstring(e->visitCount) + L" typed="
             + std::to_wstring(e->typedCount) + L" url=" + e->url + L" title=" + e->title);
+    }
+    // M5
+    Tab* t = active();
+    line(out, L"reader available=" + std::to_wstring(t && t->readerAvailable) + L" active=" + std::to_wstring(t && t->readerActive));
+    line(out, L"group current=" + std::to_wstring(m_groupId) + L" label=" + m_groupLabel + L" stash=" + std::to_wstring(m_stash.size())
+        + L" ungrouped=" + std::to_wstring(ungroupedCount()));
+    try {
+        if (auto* groups = m_app.tabGroups()) {
+            auto list = groups->list();
+            for (size_t i = 0; i < list.size(); ++i)
+                line(out, L"tabgroup " + std::to_wstring(i) + L" id=" + std::to_wstring(list[i].id) + L" tabs="
+                    + std::to_wstring(groups->tabCount(list[i].id)) + L" name=" + list[i].name);
+        }
+        if (auto* reading = m_app.readingList()) {
+            auto list = reading->list();
+            for (size_t i = 0; i < list.size(); ++i)
+                line(out, L"reading " + std::to_wstring(i) + L" id=" + std::to_wstring(list[i].id) + L" unread="
+                    + std::to_wstring(list[i].unread()) + L" url=" + list[i].url + L" title=" + list[i].title
+                    + L" excerpt=" + list[i].excerpt);
+        }
+    } catch (const std::exception&) {
+    }
+    static const wchar_t* const kKinds[] = { L"header", L"group", L"panes", L"folder", L"bookmark", L"reading", L"placeholder" };
+    line(out, L"sidebar open=" + std::to_wstring(m_sidebarOpen) + L" pane="
+        + (m_sidebar.pane() == Sidebar::Pane::Bookmarks ? L"b" : L"r") + L" rows=" + std::to_wstring(m_sidebar.count()));
+    for (int i = 0; i < m_sidebar.count(); ++i) {
+        auto* it = m_sidebar.item(i);
+        line(out, L"row " + std::to_wstring(i) + L" kind=" + kKinds[int(it->kind)] + L" id=" + std::to_wstring(it->id)
+            + L" depth=" + std::to_wstring(it->depth) + L" current=" + std::to_wstring(it->current) + L" title=" + it->title);
     }
     app::App::writeTextFile(path, out);
 }
@@ -831,7 +936,7 @@ void BrowserWindow::refreshStartPage()
             for (auto& b : bookmarks->children(services::Bookmarks::kFavoritesId)) {
                 if (b.folder)
                     continue; // folders inside Favorites aren't shown on the start page yet
-                favorites.push_back({ b.id, 0, b.title, b.url, services::displayHost(b.url) });
+                favorites.push_back({ b.id, 0, 0, b.title, b.url, services::displayHost(b.url) });
                 if (favorites.size() >= kMaxFavoritesShown)
                     break;
             }
@@ -840,14 +945,30 @@ void BrowserWindow::refreshStartPage()
                 bool isFavorite = std::any_of(favorites.begin(), favorites.end(), [&](auto& f) { return f.url == e.url; });
                 if (isFavorite)
                     continue;
-                frequent.push_back({ 0, e.id, e.title, e.url, services::displayHost(e.url) });
+                frequent.push_back({ 0, e.id, 0, e.title, e.url, services::displayHost(e.url) });
                 if (frequent.size() >= kMaxFrequentShown)
                     break;
             }
     } catch (const std::exception& e) {
         platform::log(L"start page data FAILED: %hs", e.what());
     }
-    m_startPage.setContent(std::move(favorites), std::move(frequent));
+    std::vector<StartPage::Item> reading;
+    try {
+        if (auto* list = m_app.readingList())
+            for (auto& r : list->list(true)) {
+                StartPage::Item item;
+                item.readingId = r.id;
+                item.title = r.title;
+                item.url = r.url;
+                item.host = services::displayHost(r.url);
+                reading.push_back(std::move(item));
+                if (reading.size() >= kMaxFrequentShown)
+                    break;
+            }
+    } catch (const std::exception& e) {
+        platform::log(L"reading list query FAILED: %hs", e.what());
+    }
+    m_startPage.setContent(std::move(favorites), std::move(frequent), std::move(reading));
     m_startPage.layout(contentRectDip());
     m_startHover = {};
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1144,6 +1265,7 @@ void BrowserWindow::updateTheme()
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Variable Text");
     SendMessageW(m_address, WM_SETFONT, reinterpret_cast<WPARAM>(m_editFont), TRUE);
     SendMessageW(m_historySearch, WM_SETFONT, reinterpret_cast<WPARAM>(m_editFont), TRUE);
+    SendMessageW(m_renameEdit, WM_SETFONT, reinterpret_cast<WPARAM>(m_editFont), TRUE);
     if (m_editBrush)
         DeleteObject(m_editBrush);
     m_editBrush = CreateSolidBrush(toColorRef(paletteFor(m_theme).fieldFocused));
@@ -1169,6 +1291,7 @@ void BrowserWindow::updateTheme()
     makeFormat(m_listFormat, 13.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
 
     discardDeviceResources();
+    updateGroupLabel();
     layout();
     RedrawWindow(m_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
 }
@@ -1237,7 +1360,8 @@ D2D1_RECT_F BrowserWindow::contentRectDip() const
     const Tab* t = m_active >= 0 && m_active < int(m_tabs.size()) ? m_tabs[m_active].get() : nullptr;
     if (t && !t->banner.empty() && !m_overviewOpen)
         top += tokens::kBannerHeight;
-    return D2D1::RectF(0, top, rc.right / dpiScale(), rc.bottom / dpiScale());
+    float left = m_sidebarOpen ? std::min(tokens::kSidebarWidth, rc.right / dpiScale() * 0.5f) : 0.f;
+    return D2D1::RectF(left, top, rc.right / dpiScale(), rc.bottom / dpiScale());
 }
 
 RECT BrowserWindow::contentRectPx() const
@@ -1245,7 +1369,7 @@ RECT BrowserWindow::contentRectPx() const
     RECT rc;
     GetClientRect(m_hwnd, &rc);
     auto d = contentRectDip();
-    return { 0, px(d.top), rc.right, rc.bottom };
+    return { px(d.left), px(d.top), rc.right, rc.bottom };
 }
 
 D2D1_RECT_F BrowserWindow::toolbarButtonRect(Hit which) const
@@ -1256,9 +1380,15 @@ D2D1_RECT_F BrowserWindow::toolbarButtonRect(Hit which) const
     float top = (tokens::kToolbarHeight - tokens::kButtonSize) / 2;
     auto at = [&](float left) { return D2D1::RectF(left, top, left + tokens::kButtonSize, top + tokens::kButtonSize); };
     float rightEdge = width - tokens::kCaptionReserve - 6;
+    // Left: sidebar, tab group picker (chevron + group name), back, forward.
+    float groupLeft = tokens::kLeftInset + tokens::kButtonSize + 2;
+    float groupWidth = 20 + (m_groupLabelWidth > 0 ? m_groupLabelWidth + 8 : 0);
+    float backLeft = groupLeft + groupWidth + 6;
     switch (which) {
-    case Hit::Back: return at(tokens::kLeftInset);
-    case Hit::Forward: return at(tokens::kLeftInset + tokens::kButtonSize + 2);
+    case Hit::Sidebar: return at(tokens::kLeftInset);
+    case Hit::GroupMenu: return D2D1::RectF(groupLeft, top, groupLeft + groupWidth, top + tokens::kButtonSize);
+    case Hit::Back: return at(backLeft);
+    case Hit::Forward: return at(backLeft + tokens::kButtonSize + 2);
     case Hit::Overview: return at(rightEdge - tokens::kButtonSize);
     case Hit::NewTab: return at(rightEdge - 2 * tokens::kButtonSize - 2);
     default: return {};
@@ -1290,14 +1420,20 @@ BrowserWindow::Hit BrowserWindow::hitTest(POINT pt) const
     if (y >= tokens::kToolbarHeight) {
         if (stripVisible() && y < chromeHeightDip())
             return m_strip.hitTest(x, y).tab >= 0 ? Hit::Strip : Hit::Caption;
+        if (m_sidebarOpen && x < contentRectDip().left)
+            return Hit::SidebarArea;
         return Hit::Content;
     }
-    for (Hit h : { Hit::Back, Hit::Forward, Hit::NewTab, Hit::Overview })
+    for (Hit h : { Hit::Sidebar, Hit::GroupMenu, Hit::Back, Hit::Forward, Hit::NewTab, Hit::Overview })
         if (contains(toolbarButtonRect(h), x, y))
             return h;
     auto field = addressRectDip();
     if (contains(field, x, y)) {
         auto reload = D2D1::RectF(field.right - tokens::kFieldHeight, field.top, field.right, field.bottom);
+        auto reader = D2D1::RectF(field.left, field.top, field.left + tokens::kFieldHeight, field.bottom);
+        const Tab* t = m_active >= 0 && m_active < int(m_tabs.size()) ? m_tabs[m_active].get() : nullptr;
+        if (!m_editing && t && t->readerAvailable && contains(reader, x, y))
+            return Hit::Reader;
         return contains(reload, x, y) && !m_editing ? Hit::Reload : Hit::Address;
     }
     return Hit::Caption;
@@ -1317,6 +1453,12 @@ void BrowserWindow::layout()
         float(rc.right) / std::max(1.f, float(rc.bottom - px(chromeHeightDip()))));
     m_startPage.layout(contentRectDip());
     m_historyView.layout(contentRectDip());
+    if (m_sidebarOpen) {
+        auto c = contentRectDip();
+        m_sidebar.layout(D2D1::RectF(0, chromeHeightDip(), c.left, c.bottom));
+        if (m_renameId >= 0)
+            beginRename(m_renameKind, m_renameId); // follow the row
+    }
     if (m_historySearch) {
         auto r = m_historyView.searchRect();
         int h = px(tokens::kBodyFontSize * 1.45f);
@@ -1373,6 +1515,17 @@ void BrowserWindow::paint()
             p.fill(D2D1::RoundedRect(r, tokens::kButtonRadius, tokens::kButtonRadius), m_pressed == id ? pal.pressed : pal.hover);
         return r;
     };
+    auto sb = button(Hit::Sidebar, true);
+    if (m_sidebarOpen)
+        p.fill(D2D1::RoundedRect(sb, tokens::kButtonRadius, tokens::kButtonRadius), pal.pressed);
+    p.sidebarIcon(D2D1::Point2F((sb.left + sb.right) / 2, (sb.top + sb.bottom) / 2), pal.text);
+    auto gm = button(Hit::GroupMenu, true);
+    p.chevronDown(D2D1::Point2F(gm.left + 10, (gm.top + gm.bottom) / 2), 3.5f, pal.text);
+    if (!m_groupLabel.empty()) {
+        brush->SetColor(pal.text);
+        m_rt->DrawTextW(m_groupLabel.c_str(), UINT32(m_groupLabel.size()), m_cardTitleFormat.Get(),
+            D2D1::RectF(gm.left + 20, gm.top, gm.right - 4, gm.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
     p.chevron(button(Hit::Back, canBack), true, canBack ? pal.text : pal.secondary);
     p.chevron(button(Hit::Forward, canForward), false, canForward ? pal.text : pal.secondary);
     auto nt = button(Hit::NewTab, true);
@@ -1417,6 +1570,19 @@ void BrowserWindow::paint()
         if (services::isSecureURL(url))
             p.lock(D2D1::Point2F(textRect.left + tm.left - 10, (f.top + f.bottom) / 2), pal.secondary);
 
+        if (tab && tab->readerAvailable) {
+            auto rd = D2D1::RectF(f.left, f.top, f.left + tokens::kFieldHeight, f.bottom);
+            auto rc = D2D1::Point2F((rd.left + rd.right) / 2, (rd.top + rd.bottom) / 2);
+            if (tab->readerActive) {
+                brush->SetColor(pal.accent);
+                m_rt->FillEllipse(D2D1::Ellipse(rc, 13, 13), brush.Get());
+            } else if (m_hover == Hit::Reader || m_pressed == Hit::Reader) {
+                brush->SetColor(m_pressed == Hit::Reader ? pal.pressed : pal.hover);
+                m_rt->FillEllipse(D2D1::Ellipse(rc, 13, 13), brush.Get());
+            }
+            p.readerIcon(rc, tab->readerActive ? D2D1::ColorF(D2D1::ColorF::White) : pal.text);
+        }
+
         auto rr = D2D1::RectF(f.right - tokens::kFieldHeight, f.top, f.right, f.bottom);
         auto c = D2D1::Point2F((rr.left + rr.right) / 2, (rr.top + rr.bottom) / 2);
         if (m_hover == Hit::Reload || m_pressed == Hit::Reload) {
@@ -1440,13 +1606,15 @@ void BrowserWindow::paint()
         RECT rc;
         GetClientRect(m_hwnd, &rc);
         float top = chromeHeightDip();
-        auto br = D2D1::RectF(0, top, rc.right / dpiScale(), top + tokens::kBannerHeight);
+        auto br = D2D1::RectF(contentRectDip().left, top, rc.right / dpiScale(), top + tokens::kBannerHeight);
         p.fill(br, pal.banner);
         brush->SetColor(pal.text);
         m_rt->DrawTextW(tab->banner.c_str(), UINT32(tab->banner.size()), m_hostFormat.Get(), br, brush.Get());
     }
 
     auto icon = [this](const std::wstring& host) { return siteIconBitmap(host); };
+    if (m_sidebarOpen)
+        m_sidebar.paint(p, pal, m_cardTitleFormat.Get(), m_listFormat.Get(), m_tabFormat.Get(), m_sidebarHover, icon);
     if (showingStartPage())
         m_startPage.paint(p, pal, m_headingFormat.Get(), m_cardBigFormat.Get(), m_letterFormat.Get(), m_listFormat.Get(),
             m_startHover, icon);
@@ -1768,6 +1936,8 @@ bool BrowserWindow::handleShortcut(const MSG& msg)
     bool shift = GetKeyState(VK_SHIFT) & 0x8000;
     WPARAM k = msg.wParam;
     int n = int(m_tabs.size());
+    if (msg.hwnd == m_renameEdit && (k == VK_RETURN || k == VK_ESCAPE))
+        return false; // the sidebar's rename field handles these itself
 
     // Tabs and windows.
     if (ctrl && !shift && k == 'T') {
@@ -1793,6 +1963,15 @@ bool BrowserWindow::handleShortcut(const MSG& msg)
     // History: Ctrl+H, the Windows browser convention (Ctrl+Y is Redo in page text fields).
     if (ctrl && !shift && !alt && k == 'H') { setHistory(!m_historyOpen); return true; }
     if (ctrl && !shift && !alt && k == 'D') { addBookmark(); return true; }
+    if (ctrl && shift && !alt && k == 'D') { addToReadingList(); return true; }
+    if (ctrl && shift && !alt && k == 'L') { setSidebar(!m_sidebarOpen); return true; }
+    // Reader: F9, the Windows reading-view convention (Ctrl+Shift+R is a hard reload elsewhere).
+    if (k == VK_F9 && !ctrl && !alt) { setReader(!(tab && tab->readerActive)); return true; }
+    if (tab && tab->readerActive && ctrl && !alt && (k == VK_OEM_PLUS || k == VK_OEM_MINUS || k == '0')) {
+        auto style = m_app.readerStyle();
+        applyReaderStyle(k == VK_OEM_PLUS ? style.larger() : k == VK_OEM_MINUS ? style.smaller() : [&] { style.sizePercent = 100; return style; }());
+        return true;
+    }
 
     if (m_historyOpen) {
         int count = m_historyView.count();
@@ -1854,6 +2033,7 @@ bool BrowserWindow::handleShortcut(const MSG& msg)
     if ((alt && k == VK_RIGHT) || (ctrl && !shift && k == VK_OEM_6)) { tab->view->goForward(); return true; }
     if (k == VK_F12 || (ctrl && alt && k == 'I') || (ctrl && shift && k == 'I')) { tab->view->showInspector(); return true; }
     if (k == VK_ESCAPE && tab->loading && !m_editing) { tab->view->stop(); return true; }
+    if (k == VK_ESCAPE && tab->readerActive && !m_editing) { setReader(false); return true; }
     return false;
 }
 
@@ -1996,6 +2176,11 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
         if (showingStartPage() && h == Hit::Content)
             startHover = m_startPage.hitTest(x, y);
         int historyHover = m_historyOpen && h == Hit::Content ? m_historyView.hitTest(x, y) : -1;
+        Sidebar::Hit sidebarHover = h == Hit::SidebarArea ? m_sidebar.hitTest(x, y) : Sidebar::Hit {};
+        if (!(sidebarHover == m_sidebarHover)) {
+            m_sidebarHover = sidebarHover;
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
         if (h != m_hover || sh.tab != m_stripState.hover || sh.close != m_stripState.hoverClose
             || ovHover != m_overviewHover || ovClose != m_overviewHoverClose
             || !(startHover == m_startHover) || historyHover != m_historyHover) {
@@ -2019,6 +2204,7 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
         m_overviewHover = -1;
         m_startHover = {};
         m_historyHover = -1;
+        m_sidebarHover = {};
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
 
@@ -2074,6 +2260,18 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
                 beginEditingAddress(true);
                 break;
             case Hit::Overview: setOverview(!m_overviewOpen); break;
+            case Hit::Sidebar: setSidebar(!m_sidebarOpen); break;
+            case Hit::GroupMenu: {
+                auto r = toolbarButtonRect(Hit::GroupMenu);
+                POINT screen { px(r.left), px(r.bottom) };
+                ClientToScreen(m_hwnd, &screen);
+                showGroupMenu(screen);
+                break;
+            }
+            case Hit::Reader: setReader(!(tab && tab->readerActive)); break;
+            case Hit::SidebarArea:
+                sidebarClick(m_sidebar.hitTest(x, y), (GetKeyState(VK_CONTROL) & 0x8000) != 0);
+                break;
             case Hit::Strip: {
                 auto sh = m_strip.hitTest(x, y);
                 if (sh.close)
@@ -2100,7 +2298,9 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
                 } else if (showingStartPage()) {
                     if (auto* item = m_startPage.item(m_startPage.hitTest(x, y))) {
                         std::wstring url = item->url; // navigating rebuilds the start page
-                        if (ctrl)
+                        if (item->readingId)
+                            openReadingItem(item->readingId, ctrl);
+                        else if (ctrl)
                             openTab(url, false, m_active + 1);
                         else
                             navigate(url, false);
@@ -2119,7 +2319,11 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_MOUSEWHEEL: {
         float dy = -GET_WHEEL_DELTA_WPARAM(wp) / float(WHEEL_DELTA) * 90.f;
-        if (m_overviewOpen)
+        POINT wheelPt { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; // screen coordinates
+        ScreenToClient(m_hwnd, &wheelPt);
+        if (hitTest(wheelPt) == Hit::SidebarArea)
+            m_sidebar.scrollBy(dy);
+        else if (m_overviewOpen)
             m_overview.scrollBy(dy);
         else if (m_historyOpen)
             m_historyView.scrollBy(dy);
@@ -2154,6 +2358,10 @@ LRESULT BrowserWindow::handle(UINT msg, WPARAM wp, LPARAM lp)
         ClientToScreen(m_hwnd, &screen);
         if (index >= 0)
             showTabMenu(index, screen);
+        else if (hitTest(pt) == Hit::SidebarArea)
+            showSidebarMenu(m_sidebar.hitTest(x, y), screen);
+        else if (hitTest(pt) == Hit::Reader)
+            showReaderMenu(screen);
         else if (hitTest(pt) == Hit::Content && m_historyOpen)
             showHistoryMenu(m_historyView.hitTest(x, y), screen);
         else if (hitTest(pt) == Hit::Content && showingStartPage())

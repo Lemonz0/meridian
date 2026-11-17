@@ -73,16 +73,30 @@ if(MERIDIAN_BUILD_APP)
         src/app/main.cpp
         src/app/App.cpp
         src/app/Meridian.manifest
+        src/engine/ReaderScript.cpp
         src/engine/WebView.cpp
         src/ui/BrowserWindow.cpp
+        src/ui/BrowserWindowLibrary.cpp
         src/ui/Chrome.cpp
         src/ui/HistoryView.cpp
+        src/ui/Sidebar.cpp
         src/ui/StartPage.cpp
         src/ui/SuggestionPopup.cpp
         src/ui/TabStrip.cpp
         src/ui/TabOverview.cpp
     )
-    target_include_directories(Meridian PRIVATE src "${WEBKIT_HEADERS_DIR}")
+    target_include_directories(Meridian PRIVATE src "${WEBKIT_HEADERS_DIR}" "${CMAKE_BINARY_DIR}/generated")
+
+    # Reader script, embedded as bytes and regenerated when reader.js changes.
+    set(READER_JS "${CMAKE_SOURCE_DIR}/src/engine/reader.js")
+    set(READER_JS_HEADER "${CMAKE_BINARY_DIR}/generated/ReaderScriptData.h")
+    add_custom_command(OUTPUT "${READER_JS_HEADER}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/generated"
+        COMMAND ${CMAKE_COMMAND} -DIN=${READER_JS} -DOUT=${READER_JS_HEADER} -DNAME=kReaderScript
+                -P "${CMAKE_SOURCE_DIR}/cmake/EmbedText.cmake"
+        DEPENDS "${READER_JS}" "${CMAKE_SOURCE_DIR}/cmake/EmbedText.cmake"
+        COMMENT "Embedding reader.js")
+    target_sources(Meridian PRIVATE "${READER_JS_HEADER}")
     target_link_libraries(Meridian PRIVATE meridian_services meridian_platform "${WEBKIT_LIB}"
         d2d1 dwrite comctl32 shell32 uxtheme)
 

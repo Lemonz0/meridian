@@ -26,6 +26,7 @@ struct WebViewCallbacks {
     std::function<void(const std::wstring& iconURL)> faviconURLChanged;
     // Main-frame navigation committed (the page now shows `url`): one history visit.
     std::function<void(const std::wstring& url)> navigationCommitted;
+    std::function<void()> loadFinished;                 // main-frame load done (Reader detection runs here)
     // target=_blank / window.open: the UI creates a tab for this configuration
     // and returns its view (or nullptr to block the popup).
     std::function<WebView*(WKPageConfigurationRef)> createNewPage;
@@ -71,6 +72,11 @@ public:
     void stop();
     void showInspector();
 
+    // Runs `script` in the main frame (page world) and reports its string
+    // result on the UI thread; empty if it failed, returned a non-string, or
+    // the view was destroyed first (then `done` is not called at all).
+    void evaluateScript(const std::wstring& script, std::function<void(const std::wstring&)> done);
+
     bool canGoBack() const;
     bool canGoForward() const;
     bool isLoading() const;
@@ -96,6 +102,7 @@ private:
 
     WebViewCallbacks m_callbacks;
     WKPtr<WKViewRef> m_view;
+    uint64_t m_serial { 0 }; // unique per view, so async answers can't reach a later view at the same address
     bool m_isLoading { false };
 
     // Server-trust fallback (see platform/CertificateTrust.h). Curl verification

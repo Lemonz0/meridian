@@ -96,6 +96,8 @@ int App::run(const std::wstring& initialURL)
         open(m_bookmarks, L"bookmarks");
         open(m_settings, L"settings");
         open(m_icons, L"site icons");
+        open(m_readingList, L"reading list");
+        open(m_tabGroups, L"tab groups");
     }
 
     m_engine = std::make_unique<engine::EngineContext>(false, m_profile);
@@ -157,6 +159,7 @@ void App::windowClosing(ui::BrowserWindow* w)
         // Closing the last window: that window is the session to restore.
         m_lastWindowSnapshot = { w->sessionSnapshot() };
     }
+    w->persistGroup(); // a group outlives the window that showed it
     m_windows.erase(std::remove(m_windows.begin(), m_windows.end(), w), m_windows.end());
     saveSessionNow();
 }
@@ -176,7 +179,7 @@ void App::dumpState(const std::wstring& path)
         WINDOWPLACEMENT wp { sizeof(wp) };
         GetWindowPlacement(win->hwnd(), &wp);
         out += L"window " + std::to_wstring(w) + L" active=" + std::to_wstring(win->activeIndex())
-            + L" maximized=" + std::to_wstring(wp.showCmd == SW_SHOWMAXIMIZED) + L"\n";
+            + L" maximized=" + std::to_wstring(wp.showCmd == SW_SHOWMAXIMIZED) + L" group=" + std::to_wstring(win->groupId()) + L"\n";
         for (int i = 0; i < win->tabCount(); ++i) {
             auto& t = win->tab(i);
             out += L"tab " + std::to_wstring(i) + L" pinned=" + std::to_wstring(t.pinned) + L" view=" + std::to_wstring(bool(t.view))
@@ -321,9 +324,11 @@ void App::saveSessionNow()
     if (m_windows.empty())
         snapshot = m_lastWindowSnapshot;
     else
-        for (auto* w : m_windows)
+        for (auto* w : m_windows) {
+            w->persistGroup();
             if (w->tabCount())
                 snapshot.push_back(w->sessionSnapshot());
+        }
     try {
         m_session->save(snapshot);
         size_t tabs = 0;
@@ -333,6 +338,43 @@ void App::saveSessionNow()
     } catch (const std::exception& e) {
         platform::log(L"session save FAILED: %hs", e.what());
     }
+}
+
+services::ReaderStyle App::readerStyle()
+{
+    try {
+        if (m_settings)
+            return services::loadReaderStyle(*m_settings);
+    } catch (const std::exception&) {
+    }
+    return {};
+}
+
+void App::setReaderStyle(const services::ReaderStyle& style)
+{
+    if (!m_settings)
+        return;
+    try {
+        services::saveReaderStyle(*m_settings, style);
+    } catch (const std::exception& e) {
+        platform::log(L"settings write FAILED: %hs", e.what());
+    }
+}
+
+ui::BrowserWindow* App::windowShowingGroup(int64_t groupId, const ui::BrowserWindow* except)
+{
+    if (!groupId)
+        return nullptr;
+    for (auto* w : m_windows)
+        if (w != except && w->groupId() == groupId)
+            return w;
+    return nullptr;
+}
+
+void App::libraryChanged()
+{
+    for (auto* w : m_windows)
+        w->libraryChanged();
 }
 
 } // namespace meridian::app

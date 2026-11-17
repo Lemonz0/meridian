@@ -214,4 +214,63 @@ void Painter::siteTile(D2D1_RECT_F box, ID2D1Bitmap* icon, const std::wstring& h
     rt->DrawTextW(ch.c_str(), UINT32(ch.size()), letterFormat, box, brush);
 }
 
+void Painter::sidebarIcon(D2D1_POINT_2F c, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    auto r = D2D1::RoundedRect(D2D1::RectF(c.x - 8, c.y - 6.5f, c.x + 8, c.y + 6.5f), 2.5f, 2.5f);
+    rt->DrawRoundedRectangle(r, brush, 1.5f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x - 2.5f, c.y - 6.5f), D2D1::Point2F(c.x - 2.5f, c.y + 6.5f), brush, 1.5f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x - 6, c.y - 3), D2D1::Point2F(c.x - 4.5f, c.y - 3), brush, 1.2f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x - 6, c.y - 0.5f), D2D1::Point2F(c.x - 4.5f, c.y - 0.5f), brush, 1.2f, style.Get());
+}
+
+void Painter::chevronDown(D2D1_POINT_2F c, float half, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    rt->DrawLine(D2D1::Point2F(c.x - half, c.y - half / 2), D2D1::Point2F(c.x, c.y + half / 2), brush, 1.5f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x, c.y + half / 2), D2D1::Point2F(c.x + half, c.y - half / 2), brush, 1.5f, style.Get());
+}
+
+void Painter::readerIcon(D2D1_POINT_2F c, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    rt->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(c.x - 6, c.y - 7.5f, c.x + 6, c.y + 7.5f), 2, 2), brush, 1.3f, style.Get());
+    for (int i = 0; i < 4; ++i) {
+        float y = c.y - 4 + i * 2.7f;
+        float right = i == 3 ? c.x + 0.5f : c.x + 3.2f;
+        rt->DrawLine(D2D1::Point2F(c.x - 3.2f, y), D2D1::Point2F(right, y), brush, 1.1f, style.Get());
+    }
+}
+
+void Painter::folder(D2D1_POINT_2F c, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    ComPtr<ID2D1PathGeometry> g;
+    factory->CreatePathGeometry(g.GetAddressOf());
+    ComPtr<ID2D1GeometrySink> sink;
+    g->Open(sink.GetAddressOf());
+    sink->BeginFigure(D2D1::Point2F(c.x - 7, c.y - 4.5f), D2D1_FIGURE_BEGIN_HOLLOW);
+    sink->AddLine(D2D1::Point2F(c.x - 2.5f, c.y - 4.5f));
+    sink->AddLine(D2D1::Point2F(c.x - 1, c.y - 3));
+    sink->AddLine(D2D1::Point2F(c.x + 7, c.y - 3));
+    sink->AddLine(D2D1::Point2F(c.x + 7, c.y + 5));
+    sink->AddLine(D2D1::Point2F(c.x - 7, c.y + 5));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    rt->DrawGeometry(g.Get(), brush, 1.3f, style.Get());
+}
+
+void Painter::tabsIcon(D2D1_POINT_2F c, const D2D1_COLOR_F& color)
+{
+    brush->SetColor(color);
+    auto style = roundStroke(factory);
+    rt->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(c.x - 7, c.y - 3.5f, c.x + 5, c.y + 6), 2, 2), brush, 1.3f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x - 4.5f, c.y - 6), D2D1::Point2F(c.x + 7, c.y - 6), brush, 1.3f, style.Get());
+    rt->DrawLine(D2D1::Point2F(c.x + 7, c.y - 6), D2D1::Point2F(c.x + 7, c.y + 3), brush, 1.3f, style.Get());
+}
+
 } // namespace meridian::ui

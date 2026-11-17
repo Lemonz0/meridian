@@ -7,9 +7,12 @@
 #include "services/Favicons.h"
 #include "services/History.h"
 #include "services/IconStore.h"
+#include "services/Reader.h"
+#include "services/ReadingList.h"
 #include "services/SearchSuggestions.h"
 #include "services/SessionStore.h"
 #include "services/Settings.h"
+#include "services/TabGroups.h"
 
 #include <filesystem>
 #include <memory>
@@ -54,6 +57,8 @@ public:
     services::Bookmarks* bookmarks() { return m_bookmarks.get(); }
     services::Settings* settings() { return m_settings.get(); }
     services::IconStore* icons() { return m_icons.get(); }
+    services::ReadingList* readingList() { return m_readingList.get(); }
+    services::TabGroups* tabGroups() { return m_tabGroups.get(); }
     services::SearchSuggestions& searchSuggestions() { return m_searchSuggestions; }
 
     // No-ops for private (ephemeral) engine contexts.
@@ -65,6 +70,16 @@ public:
     void setSearchSuggestionsEnabled(bool);
 
     static void writeTextFile(const std::wstring& path, const std::wstring& text); // UTF-8
+
+    // Reader appearance (shared by all windows; persisted in settings).
+    services::ReaderStyle readerStyle();
+    void setReaderStyle(const services::ReaderStyle&);
+
+    // Tab Groups: a group is shown by at most one window at a time.
+    ui::BrowserWindow* windowShowingGroup(int64_t groupId, const ui::BrowserWindow* except = nullptr);
+    // Bookmarks, Reading List or Tab Groups changed: every window refreshes
+    // its sidebar and start page.
+    void libraryChanged();
 
     ui::BrowserWindow* newWindow(const services::SessionWindow* restore, const RECT* bounds, bool addDefaultTab);
     void windowClosing(ui::BrowserWindow*);   // before its tabs are torn down
@@ -92,6 +107,8 @@ private:
     std::unique_ptr<services::Bookmarks> m_bookmarks;
     std::unique_ptr<services::Settings> m_settings;
     std::unique_ptr<services::IconStore> m_icons;
+    std::unique_ptr<services::ReadingList> m_readingList;
+    std::unique_ptr<services::TabGroups> m_tabGroups;
     services::SearchSuggestions m_searchSuggestions;
     services::FaviconLoader m_favicons;
     std::vector<ui::BrowserWindow*> m_windows;

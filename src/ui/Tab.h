@@ -25,6 +25,8 @@ struct Tab {
     bool startPage { false };                // new empty tab: the native start page shows instead of the view
     bool typedPending { false };             // next committed navigation came from the Smart Search field
     bool skipNextVisit { false };            // next commit is a session restore, not a new visit
+    bool readerAvailable { false };          // the page has an article Reader can show
+    bool readerActive { false };             // the Reader overlay is shown
     double progress { 0 };
 
     services::Bitmap favicon;

@@ -132,6 +132,13 @@ struct ClickHint {
 };
 ClickHint g_lastClick;
 std::set<const WebView*> g_liveViews; // guards async callbacks against destroyed views
+uint64_t g_nextSerial = 0;
+
+struct ScriptRequest {
+    const WebView* view;
+    uint64_t serial;
+    std::function<void(const std::wstring&)> done;
+};
 }
 
 void WebView::noteInput(const MSG& msg)
@@ -218,7 +225,10 @@ struct WebViewThunks {
 
     static void didFinishNavigation(WKPageRef, WKNavigationRef, WKTypeRef, const void* info)
     {
-        self(info).requestFavicon();
+        auto& v = self(info);
+        v.requestFavicon();
+        if (v.m_callbacks.loadFinished)
+            v.m_callbacks.loadFinished();
     }
 
     static void didFailProvisional(WKPageRef, WKNavigationRef, WKErrorRef error, WKTypeRef, const void* info)
@@ -324,6 +334,17 @@ struct WebViewThunks {
             v.m_callbacks.closeRequested();
     }
 
+    static void scriptDone(WKTypeRef result, WKErrorRef, void* context)
+    {
+        std::unique_ptr<ScriptRequest> request(static_cast<ScriptRequest*>(context));
+        if (!g_liveViews.count(request->view) || request->view->m_serial != request->serial || !request->done)
+            return;
+        std::wstring text;
+        if (result && WKGetTypeID(result) == WKStringGetTypeID())
+            text = toWString(static_cast<WKStringRef>(result));
+        request->done(text);
+    }
+
     static void faviconScriptDone(WKTypeRef result, WKErrorRef, void* context)
     {
         auto* v = static_cast<WebView*>(context);
@@ -366,6 +387,7 @@ void WebView::initialize(WKPageConfigurationRef conf, HWND parent)
     SetWindowLongPtrW(m_messageWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
     g_liveViews.insert(this);
+    m_serial = ++g_nextSerial;
     installClients();
 }
 
@@ -464,6 +486,12 @@ void WebView::requestFavicon()
   return /^https?:$/.test(location.protocol) ? new URL('/favicon.ico', location.href).href : '';
 })())JS";
     WKPageEvaluateJavaScriptInMainFrame(page(), makeWKString(script).get(), this, WebViewThunks::faviconScriptDone);
+}
+
+void WebView::evaluateScript(const std::wstring& script, std::function<void(const std::wstring&)> done)
+{
+    auto* request = new ScriptRequest { this, m_serial, std::move(done) };
+    WKPageEvaluateJavaScriptInMainFrame(page(), makeWKString(script).get(), request, WebViewThunks::scriptDone);
 }
 
 WKPageRef WebView::page() const { return WKViewGetPage(m_view.get()); }
