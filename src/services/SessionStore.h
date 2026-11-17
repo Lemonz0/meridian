@@ -20,6 +20,11 @@ struct SessionWindow {
     int selected { 0 };
     int left { 0 }, top { 0 }, right { 0 }, bottom { 0 }; // restored (non-maximized) bounds
     bool maximized { false };
+    // Tab Groups: the group the window shows (0 = its own ungrouped tabs), and
+    // while a group is shown, the window's ungrouped tabs set aside.
+    int64_t groupId { 0 };
+    std::vector<SessionTab> stash;
+    int stashSelected { 0 };
 };
 
 class SessionStore {
