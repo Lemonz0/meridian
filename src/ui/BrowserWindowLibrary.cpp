@@ -448,8 +448,13 @@ void BrowserWindow::switchToGroup(int64_t target)
     if (m_historyOpen)
         setHistory(false);
 
-    // 1. Pinned tabs stay; the rest leave with the current group.
+    // 1. Pinned tabs stay; the rest leave with the current group. Hide the
+    //    shown page first: if it is a pinned tab, nothing else would.
     persistGroup();
+    if (Tab* shown = active(); shown && shown->view) {
+        captureThumbnail(*shown, false);
+        shown->view->setVisible(false);
+    }
     std::vector<std::unique_ptr<Tab>> pinned, leaving;
     int leavingSelected = 0;
     for (int i = 0; i < int(m_tabs.size()); ++i) {
