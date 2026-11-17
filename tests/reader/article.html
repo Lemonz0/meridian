@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html><head><title>How Engines Paint Text — Example Journal</title>
+<meta name="author" content="Ada Example">
+<meta name="description" content="A tour of how a browser engine turns glyphs into pixels.">
+<meta property="og:site_name" content="Example Journal">
+<script>window.pageScriptRan = true;</script>
+</head><body>
+<header class="masthead"><nav class="site-nav"><a href="/">Home</a> <a href="/about">About</a> <a href="/archive">Archive of everything we ever wrote here</a></nav></header>
+<div class="layout">
+  <aside class="sidebar"><h3>Popular</h3><ul><li><a href="/1">Ten tricks for faster pages, number seven will help</a></li><li><a href="/2">Another very popular link with a long title</a></li></ul></aside>
+  <article class="post">
+    <h1>How Engines Paint Text</h1>
+    <p class="byline">By Ada Example</p>
+    <p>Painting text looks simple from the outside, but a browser engine does a surprising amount of work, step by step, before a single glyph reaches the screen.</p>
+    <p>First, the engine shapes the text: it turns characters into glyphs, applies kerning, ligatures and, for many scripts, contextual forms that depend on neighbouring letters.</p>
+    <figure><img src="/img/glyphs.png" alt="Glyph outlines" width="600" height="300" onerror="window.bad=1"><figcaption>Glyph outlines, before rasterization.</figcaption></figure>
+    <p>Next comes line breaking, which has to respect the language's rules, hyphenation settings, and the width of the box the text lives in, among other things.</p>
+    <p>Then the engine rasterizes glyphs, usually caching them in an atlas on the GPU, so that drawing the same letter again is cheap and fast.</p>
+    <img src="/pixel.gif" width="1" height="1" alt="">
+    <p>Finally, the compositor assembles layers. Read <a href="javascript:alert(1)">this</a> and <a href="/more">the follow-up post</a> for the details, including subpixel positioning.</p>
+    <pre><code>paint(glyphs, atlas);</code></pre>
+    <iframe src="https://ads.example/frame"></iframe>
+    <div class="share-buttons"><a href="https://social.example/share">Share</a> <a href="https://social.example/tweet">Post</a></div>
+    <p style="display:none">Hidden paragraph that should never appear in reader view, no matter how long it gets.</p>
+    <script>document.write('injected');</script>
+    <button onclick="evil()">Subscribe</button>
+  </article>
+</div>
+<section class="comments"><h2>Comments</h2><p>First! This comment is long enough to be considered a paragraph by naive heuristics, really.</p><p>Another comment that goes on and on, with commas, many commas, so many, many, many commas.</p></section>
+<footer class="site-footer"><p>Copyright Example Journal. All rights reserved, forever and ever, everywhere.</p></footer>
+</body></html>

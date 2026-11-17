@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html><head><title>Notes on Caching | Div Site</title></head><body>
+<div id="top-banner">Sign up for our newsletter today and never miss an update from us again, ever.</div>
+<div id="main-content"><div class="entry-content">
+<h2>Notes on Caching</h2>
+<div>Caching is the art of remembering answers, so that the same question, asked again, costs almost nothing to answer the second time around.<br><br>
+A cache needs a policy for forgetting, because memory is finite, and the cost of a wrong guess grows with the size of the working set.</div>
+<p>Least-recently-used eviction is a good default, but scan-heavy workloads can flush the useful entries, which is why many systems add a small probationary segment.</p>
+<p>Invalidation is the hard part: knowing when a remembered answer is no longer true, without asking the slow source every single time, requires versioning or leases.</p>
+<p>Measure hit rates per key class, not just overall, because a high average can hide a hot path that misses constantly and dominates tail latency.</p>
+</div></div>
+<div class="related-posts"><p>Related: a long teaser for another post about caches, with commas, and more commas, and more.</p></div>
+</body></html>

@@ -40,6 +40,7 @@ add_library(meridian_services STATIC
     src/services/Favicons.cpp
     src/services/History.cpp
     src/services/IconStore.cpp
+    src/services/Reader.cpp
     src/services/ReadingList.cpp
     src/services/SearchSuggestions.cpp
     src/services/SessionStore.cpp
@@ -103,7 +104,7 @@ if(MERIDIAN_BUILD_TESTS)
     add_executable(meridian_tests tests/test_main.cpp tests/UrlFixupTests.cpp
         tests/SessionStoreTests.cpp tests/FaviconTests.cpp
         tests/HistoryTests.cpp tests/BookmarkTests.cpp tests/SuggestionTests.cpp
-        tests/LibraryTests.cpp)
+        tests/LibraryTests.cpp tests/ReaderTests.cpp)
     target_link_libraries(meridian_tests PRIVATE meridian_services)
     meridian_copy_sqlite(meridian_tests)
     add_test(NAME services COMMAND meridian_tests)
